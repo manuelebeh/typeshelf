@@ -1,4 +1,5 @@
 import type { Face } from "./api";
+import { N_ } from "./i18n";
 
 /** Smart tag rules: a family matches when one of its styles satisfies the conditions. */
 
@@ -33,31 +34,31 @@ export interface Rule {
 type Kind = "text" | "enum" | "number" | "bool" | "days";
 
 export const FIELDS: Record<Field, { label: string; kind: Kind }> = {
-  family: { label: "Famille", kind: "text" },
-  style: { label: "Style", kind: "text" },
-  designer: { label: "Créateur", kind: "text" },
-  manufacturer: { label: "Fonderie", kind: "text" },
-  classification: { label: "Classification", kind: "enum" },
-  weight: { label: "Graisse", kind: "number" },
-  glyphs: { label: "Nombre de glyphes", kind: "number" },
-  italic: { label: "Italique", kind: "bool" },
-  mono: { label: "Chasse fixe", kind: "bool" },
-  variable: { label: "Variable", kind: "bool" },
-  starred: { label: "Favori", kind: "bool" },
-  active: { label: "Active", kind: "bool" },
-  addedDays: { label: "Ajoutée", kind: "days" },
+  family: { label: N_("Family"), kind: "text" },
+  style: { label: N_("Style"), kind: "text" },
+  designer: { label: N_("Designer"), kind: "text" },
+  manufacturer: { label: N_("Foundry"), kind: "text" },
+  classification: { label: N_("Classification"), kind: "enum" },
+  weight: { label: N_("Weight"), kind: "number" },
+  glyphs: { label: N_("Glyph count"), kind: "number" },
+  italic: { label: N_("Italic"), kind: "bool" },
+  mono: { label: N_("Monospaced"), kind: "bool" },
+  variable: { label: N_("Variable"), kind: "bool" },
+  starred: { label: N_("Favorite"), kind: "bool" },
+  active: { label: N_("Activated"), kind: "bool" },
+  addedDays: { label: N_("Added"), kind: "days" },
 };
 
 export const OPS: Record<Kind, { op: Op; label: string }[]> = {
   text: [
-    { op: "contains", label: "contient" },
-    { op: "notContains", label: "ne contient pas" },
-    { op: "is", label: "est" },
-    { op: "isNot", label: "n'est pas" },
+    { op: "contains", label: N_("contains") },
+    { op: "notContains", label: N_("does not contain") },
+    { op: "is", label: N_("is") },
+    { op: "isNot", label: N_("is not") },
   ],
   enum: [
-    { op: "is", label: "est" },
-    { op: "isNot", label: "n'est pas" },
+    { op: "is", label: N_("is") },
+    { op: "isNot", label: N_("is not") },
   ],
   number: [
     { op: "gte", label: "≥" },
@@ -65,10 +66,10 @@ export const OPS: Record<Kind, { op: Op; label: string }[]> = {
     { op: "is", label: "=" },
   ],
   bool: [
-    { op: "isTrue", label: "oui" },
-    { op: "isFalse", label: "non" },
+    { op: "isTrue", label: N_("yes") },
+    { op: "isFalse", label: N_("no") },
   ],
-  days: [{ op: "within", label: "dans les derniers (jours)" }],
+  days: [{ op: "within", label: N_("within the last (days)") }],
 };
 
 export const defaultCondition = (field: Field = "family"): Condition => {

@@ -9,6 +9,15 @@
   "use strict";
   var cep = root.__adobe_cep__;
 
+  /** Texts come from panel-core.js (English, or French on a French system); loaded after this file. */
+  function t(text, vars) {
+    var translate = root.TypeshelfPanel && root.TypeshelfPanel.t;
+    if (translate) return translate(text, vars);
+    var out = text;
+    for (var k in vars || {}) out = out.split("{" + k + "}").join(String(vars[k]));
+    return out;
+  }
+
   /** Follows the panel colour chosen in the application's preferences. */
   function applySkin() {
     try {
@@ -37,13 +46,13 @@
             /* empty body */
           }
           if (xhr.status >= 200 && xhr.status < 300) resolve(value);
-          else reject(new Error(value.error || "Erreur " + xhr.status));
+          else reject(new Error(value.error || t("Error {status}", { status: xhr.status })));
         };
         xhr.ontimeout = function () {
-          reject(new Error("Typeshelf ne répond pas"));
+          reject(new Error(t("Typeshelf is not responding")));
         };
         xhr.onerror = function () {
-          reject(new Error("Typeshelf n'est pas ouvert ou n'accepte pas les plugins."));
+          reject(new Error(t("Typeshelf is not open or does not accept plugins.")));
         };
         xhr.send(body ? JSON.stringify(body) : null);
       });
@@ -54,7 +63,7 @@
   function evalScript(code) {
     return new Promise(function (resolve, reject) {
       cep.evalScript(code, function (result) {
-        if (result === "EvalScript error.") reject(new Error("script de l'application en erreur"));
+        if (result === "EvalScript error.") reject(new Error(t("the application script failed")));
         else resolve(result);
       });
     });

@@ -9,8 +9,8 @@ import {
   cssFamily,
   emptyGoogleFilter,
   folderName,
-  GOOGLE_CLASSES,
-  GOOGLE_SORTS,
+  googleClassLabels,
+  googleSortLabels,
   googleFilterCount,
   hasItalic,
   loadPreview,
@@ -20,8 +20,9 @@ import {
   type GoogleSort,
 } from "./google";
 import { hydrateIcons, icon } from "./icons";
+import { dateLocale, setLanguage, t, tn, translateStatic, type Language } from "./i18n";
 import { matchesRule, parseRule, type Rule } from "./rules";
-import { GLYPH_GROUPS, LANGUAGES, SPECIMEN } from "./samples";
+import { GLYPH_GROUPS, LANGUAGES, specimen } from "./samples";
 import { editTag, TAG_COLORS, tagColor } from "./tags";
 
 // ------------------------------------------------------------------ types & state
@@ -47,52 +48,52 @@ type Sort = "name" | "name-desc" | "recent" | "styles";
 type Theme = "auto" | "light" | "dark";
 type View = "grid" | "rows";
 
-const CLASSES: Record<string, string> = {
-  sans: "Sans serif",
-  serif: "Serif",
-  slab: "Slab serif",
-  mono: "Monospace",
-  script: "Script",
-  display: "Display",
-  symbol: "Symboles & icônes",
-  other: "Autres",
-};
+const classLabels = (): Record<string, string> => ({
+  sans: t("Sans serif"),
+  serif: t("Serif"),
+  slab: t("Slab serif"),
+  mono: t("Monospace"),
+  script: t("Script"),
+  display: t("Display"),
+  symbol: t("Symbols & icons"),
+  other: t("Other"),
+});
 
-const SORTS: Record<Sort, string> = {
-  name: "Nom (A → Z)",
-  "name-desc": "Nom (Z → A)",
-  recent: "Date d'ajout (récentes d'abord)",
-  styles: "Nombre de styles",
-};
+const sortLabels = (): Record<Sort, string> => ({
+  name: t("Name (A → Z)"),
+  "name-desc": t("Name (Z → A)"),
+  recent: t("Date added (newest first)"),
+  styles: t("Number of styles"),
+});
 
-const FEATURE_NAMES: Record<string, string> = {
-  liga: "Ligatures standard",
-  dlig: "Ligatures discrétionnaires",
-  hlig: "Ligatures historiques",
-  calt: "Formes contextuelles",
-  kern: "Crénage",
-  smcp: "Petites capitales",
-  c2sc: "Capitales en petites capitales",
-  pcap: "Petites capitales réduites",
-  case: "Formes sensibles à la casse",
-  onum: "Chiffres elzéviriens",
-  lnum: "Chiffres alignés",
-  tnum: "Chiffres tabulaires",
-  pnum: "Chiffres proportionnels",
-  zero: "Zéro barré",
-  frac: "Fractions",
-  sups: "Exposants",
-  subs: "Indices",
-  sinf: "Inférieurs scientifiques",
-  ordn: "Ordinaux",
-  swsh: "Paraphes",
-  salt: "Variantes stylistiques",
-  titl: "Formes de titrage",
-  ccmp: "Composition de glyphes",
-  locl: "Formes localisées",
-  mark: "Positionnement des accents",
-  mkmk: "Accents sur accents",
-};
+const featureNames = (): Record<string, string> => ({
+  liga: t("Standard ligatures"),
+  dlig: t("Discretionary ligatures"),
+  hlig: t("Historical ligatures"),
+  calt: t("Contextual alternates"),
+  kern: t("Kerning"),
+  smcp: t("Small capitals"),
+  c2sc: t("Capitals to small capitals"),
+  pcap: t("Petite capitals"),
+  case: t("Case-sensitive forms"),
+  onum: t("Oldstyle figures"),
+  lnum: t("Lining figures"),
+  tnum: t("Tabular figures"),
+  pnum: t("Proportional figures"),
+  zero: t("Slashed zero"),
+  frac: t("Fractions"),
+  sups: t("Superscript"),
+  subs: t("Subscript"),
+  sinf: t("Scientific inferiors"),
+  ordn: t("Ordinals"),
+  swsh: t("Swashes"),
+  salt: t("Stylistic alternates"),
+  titl: t("Titling forms"),
+  ccmp: t("Glyph composition"),
+  locl: t("Localized forms"),
+  mark: t("Mark positioning"),
+  mkmk: t("Mark to mark positioning"),
+});
 const DEFAULT_ON = new Set(["liga", "calt", "kern", "ccmp", "locl", "mark", "mkmk", "clig", "rlig"]);
 
 const emptyFilter = () => ({
@@ -150,7 +151,6 @@ const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (c) => `
 const cssTag = (tag: string) => tag.replace(/[^A-Za-z0-9 _]/g, "");
 
 const isSystemFace = (f: Face) => f.id.startsWith("sys-");
-const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? "s" : ""}`;
 
 function stored(key: string, fallback: string): string {
   try {
@@ -173,6 +173,13 @@ const settings = {
   },
   set copyOnImport(v: boolean) {
     store("copyOnImport", String(v));
+  },
+  get language(): Language {
+    const v = stored("language", "auto");
+    return v === "en" || v === "fr" ? v : "auto";
+  },
+  set language(v: Language) {
+    store("language", v);
   },
   get theme(): Theme {
     const t = stored("theme", "dark");
@@ -220,6 +227,13 @@ const settings = {
 };
 
 const applyTheme = () => (document.documentElement.dataset.theme = settings.theme);
+
+/** Sets the language of the interface and redraws what is already on screen. */
+function applyLanguage() {
+  setLanguage(settings.language);
+  translateStatic();
+  document.title = "Typeshelf";
+}
 
 // ------------------------------------------------------------------ fonts in the web view
 
@@ -287,13 +301,13 @@ function activation(family: Family): Activation {
   return "mixed";
 }
 
-const ACTIVATION_LABEL: Record<Activation, string> = {
-  inactive: "Inactive",
-  temporary: "Active jusqu'à la fermeture de Typeshelf",
-  persistent: "Active",
-  mixed: "Partiellement active",
-  system: "Toujours active (installée sur le système)",
-};
+const activationLabels = (): Record<Activation, string> => ({
+  inactive: t("Not active"),
+  temporary: t("Active until Typeshelf quits"),
+  persistent: t("Active (permanent)"),
+  mixed: t("Partially active"),
+  system: t("Always active (installed on the system)"),
+});
 
 const isActive = (f: Family) => activation(f) !== "inactive";
 const addedAt = (f: Family) => Math.max(...f.faces.map((x) => x.addedAt));
@@ -443,7 +457,7 @@ async function loadGoogle(refresh = false) {
   if (isGoogle()) render();
   try {
     state.google = await api.googleCatalog(refresh);
-    if (refresh) toast(`Catalogue Google Fonts à jour : ${plural(state.google.families.length, "famille")}`);
+    if (refresh) toast(tn(state.google.families.length, "Google Fonts catalog up to date: {n} family", "Google Fonts catalog up to date: {n} families"));
   } catch (e) {
     state.googleError = String(e);
     if (refresh || !isGoogle()) toast(String(e), true);
@@ -460,12 +474,12 @@ function showPluginStatus(status: PluginApiStatus | null) {
   const el = document.querySelector("#plugins-status");
   if (!el) return;
   el.textContent = !status
-    ? "État inconnu."
+    ? t("Unknown status.")
     : !status.enabled
-      ? "Connexion coupée : les plugins ne peuvent rien activer."
+      ? t("Connection off: plugins cannot activate anything.")
       : status.listening
-        ? `En écoute sur 127.0.0.1:${status.port}.`
-        : (status.error ?? "Démarrage…");
+        ? t("Listening on 127.0.0.1:{port}.", { port: status.port })
+        : (status.error ?? t("Starting…"));
 }
 
 async function configurePlugins() {
@@ -479,8 +493,11 @@ async function configurePlugins() {
 /** A plugin activated fonts for a document: refresh the library and say so. */
 function onPluginActivity(activity: PluginActivity) {
   const parts = [];
-  if (activity.activated.length) parts.push(`${plural(activity.activated.length, "police")} activée${activity.activated.length > 1 ? "s" : ""}`);
-  if (activity.missing.length) parts.push(`${activity.missing.length} introuvable${activity.missing.length > 1 ? "s" : ""} (${activity.missing.slice(0, 3).join(", ")}${activity.missing.length > 3 ? "…" : ""})`);
+  if (activity.activated.length) parts.push(tn(activity.activated.length, "{n} font activated", "{n} fonts activated"));
+  if (activity.missing.length) {
+    const names = activity.missing.slice(0, 3).join(", ") + (activity.missing.length > 3 ? "…" : "");
+    parts.push(tn(activity.missing.length, "{n} font not found ({names})", "{n} fonts not found ({names})", { names }));
+  }
   toast(`${activity.client} : ${parts.join(" · ")}`, activity.activated.length === 0, 6000);
   reload();
 }
@@ -489,10 +506,10 @@ function syncGoogleStatus() {
   const el = document.querySelector("#google-status");
   if (!el) return;
   el.textContent = state.googleLoading
-    ? "Mise à jour…"
+    ? t("Updating…")
     : state.google
-      ? `${plural(state.google.families.length, "famille")} · catalogue du ${dateOf(state.google.fetchedAt)}`
-      : (state.googleError ?? "Le catalogue sera chargé à la première ouverture de la section.");
+      ? t("{count} · catalog of {date}", { count: tn(state.google.families.length, "{n} family", "{n} families"), date: dateOf(state.google.fetchedAt) })
+      : (state.googleError ?? t("The catalog loads the first time you open the section."));
 }
 
 /** Downloads every style of a Google family into the library, optionally activating it. */
@@ -500,12 +517,13 @@ async function googleInstall(name: string, activate: boolean) {
   if (state.googleBusy.has(name)) return;
   state.googleBusy.add(name);
   render();
-  toast(`Téléchargement de ${name}…`, false, 120_000);
+  toast(t("Downloading {name}…", { name }), false, 120_000);
   try {
     const { paths } = await api.googleDownload(name);
     const errors = activate && paths.length ? await api.setActivation(paths, "persistent") : [];
     if (errors.length) toast(errors.join("\n"), true);
-    else toast(`${name} : ${plural(paths.length, "style")} ${activate ? "installé" : "téléchargé"}${paths.length > 1 ? "s" : ""}${activate ? " et actif" + (paths.length > 1 ? "s" : "") : ""}`);
+    else if (activate) toast(tn(paths.length, "{name}: {n} style installed and active", "{name}: {n} styles installed and active", { name }));
+    else toast(tn(paths.length, "{name}: {n} style downloaded", "{name}: {n} styles downloaded", { name }));
   } catch (e) {
     toast(String(e), true);
   } finally {
@@ -517,7 +535,7 @@ async function googleInstall(name: string, activate: boolean) {
 /** Leaves the Google section for the matching library family. */
 function showInLibrary(name: string) {
   const fam = libraryFamilyFor(name);
-  if (!fam) return toast("Famille introuvable dans la bibliothèque.", true);
+  if (!fam) return toast(t("Family not found in the library."), true);
   state.sidebar = "all";
   state.search = "";
   $<HTMLInputElement>("#search").value = "";
@@ -529,32 +547,32 @@ function showInLibrary(name: string) {
 function sidebarTitle(): string {
   const key = state.sidebar;
   const fixed: Record<string, string> = {
-    all: "Toutes les polices",
-    starred: "Favoris",
-    system: "Polices système",
-    library: "Importées",
-    active: "Actives",
-    temporary: "Actives temporairement",
-    inactive: "Inactives",
-    recent: "Ajoutées récemment",
+    all: t("All fonts"),
+    starred: t("Favorites"),
+    system: t("System fonts"),
+    library: t("Imported"),
+    active: t("Active"),
+    temporary: t("Temporarily active"),
+    inactive: t("Inactive"),
+    recent: t("Recently added"),
     google: "Google Fonts",
   };
   if (fixed[key]) return fixed[key];
-  if (key.startsWith("class:")) return CLASSES[key.slice(6)] ?? "Classification";
-  if (key.startsWith("tag:")) return state.lib?.tags.find((t) => t.id === key.slice(4))?.name ?? "Tag";
-  return state.lib?.collections.find((c) => c.id === key.slice(4))?.name ?? "Collection";
+  if (key.startsWith("class:")) return classLabels()[key.slice(6)] ?? t("Classification");
+  if (key.startsWith("tag:")) return state.lib?.tags.find((t) => t.id === key.slice(4))?.name ?? t("Tag");
+  return state.lib?.collections.find((c) => c.id === key.slice(4))?.name ?? t("Collection");
 }
 
 function formatOf(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase();
-  return ext === "otf" ? "OpenType (CFF)" : ext === "ttc" ? "Collection TrueType" : ext === "otc" ? "Collection OpenType" : "TrueType";
+  return ext === "otf" ? "OpenType (CFF)" : ext === "ttc" ? t("TrueType Collection") : ext === "otc" ? t("OpenType Collection") : "TrueType";
 }
 
 const dateOf = (seconds: number) =>
-  seconds > 0 ? new Date(seconds * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "-";
+  seconds > 0 ? new Date(seconds * 1000).toLocaleDateString(dateLocale(), { day: "numeric", month: "short", year: "numeric" }) : "-";
 
 const sizeOf = (bytes: number) =>
-  bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} Mo` : `${Math.max(1, Math.round(bytes / 1024))} Ko`;
+  bytes > 1024 * 1024 ? t("{n} MB", { n: (bytes / 1024 / 1024).toFixed(1) }) : t("{n} KB", { n: Math.max(1, Math.round(bytes / 1024)) });
 
 // ------------------------------------------------------------------ data refresh & actions
 
@@ -581,7 +599,7 @@ async function loadSystemFonts() {
     state.systemFaces = await api.systemFonts();
     state.systemPaths = new Set(state.systemFaces.map((f) => f.path));
   } catch (e) {
-    toast(`Polices système : ${e}`, true);
+    toast(t("System fonts: {error}", { error: String(e) }), true);
   } finally {
     state.systemLoading = false;
     rebuild();
@@ -625,7 +643,7 @@ async function libraryAction(families: Family[], action: () => Promise<unknown>,
 
 const setScope = (families: Family[], scope: Scope) => {
   const paths = families.flatMap((f) => f.paths).filter((p) => !state.systemPaths.has(p));
-  if (!paths.length) return toast("Les polices système sont toujours actives.");
+  if (!paths.length) return toast(t("System fonts are always active."));
   return run(api.setActivation(paths, scope));
 };
 
@@ -633,19 +651,19 @@ const setStarred = (fam: Family, starred: boolean) => libraryAction([fam], () =>
 
 async function importPaths(paths: string[]) {
   if (!paths.length) return;
-  toast("Import en cours…", false, 60_000);
+  toast(t("Importing…"), false, 60_000);
   const summary = await run(api.importPaths(paths, settings.copyOnImport));
   if (!summary) return;
-  const parts = [`${plural(summary.imported, "style")} importé${summary.imported > 1 ? "s" : ""}`];
-  if (summary.skipped) parts.push(`${summary.skipped} déjà présent(s)`);
-  if (summary.failures.length) parts.push(`${summary.failures.length} illisible(s)`);
+  const parts = [tn(summary.imported, "{n} style imported", "{n} styles imported")];
+  if (summary.skipped) parts.push(t("{n} already present", { n: summary.skipped }));
+  if (summary.failures.length) parts.push(t("{n} unreadable", { n: summary.failures.length }));
   toast(parts.join(" · "), summary.imported === 0 && summary.failures.length > 0);
 }
 
 /** Copies installed font files into the library folder. */
 function copyToLibrary(families: Family[]) {
-  toast("Copie en cours…", false, 60_000);
-  run(api.importPaths([...new Set(families.flatMap((f) => f.paths))], true), "Copiée dans la bibliothèque");
+  toast(t("Copying…"), false, 60_000);
+  run(api.importPaths([...new Set(families.flatMap((f) => f.paths))], true), t("Copied to the library"));
 }
 
 async function removeFamilies(families: Family[]) {
@@ -653,13 +671,13 @@ async function removeFamilies(families: Family[]) {
   const system = families.every((f) => f.system);
   const ok = await ask(
     system
-      ? `Oublier le favori, les tags et les collections de ${names} ? La police reste installée sur le système.`
-      : `Retirer ${names} de la bibliothèque ? Les fichiers copiés par Typeshelf iront à la corbeille.`,
+      ? t("Forget the favorite, tags and collections of {names}? The font stays installed on the system.", { names })
+      : t("Remove {names} from the library? The files copied by Typeshelf will go to the Trash.", { names }),
     {
-      title: system ? "Oublier" : "Retirer de la bibliothèque",
+      title: system ? t("Forget") : t("Remove from library"),
       kind: "warning",
-      okLabel: system ? "Oublier" : "Retirer",
-      cancelLabel: "Annuler",
+      okLabel: system ? t("Forget") : t("Remove"),
+      cancelLabel: t("Cancel"),
     },
   );
   if (ok) await run(api.removeFamilies(families.map((f) => f.name)));
@@ -682,7 +700,7 @@ async function promptText(title: string, value = ""): Promise<string | null> {
 }
 
 async function newCollection(families: Family[] = []) {
-  const name = await promptText("Nouvelle collection");
+  const name = await promptText(t("New collection"));
   if (!name) return;
   const id = await run(api.createCollection(name));
   if (id && families.length) await libraryAction(families, () => api.addToCollection(id, families.map((f) => f.name)));
@@ -694,10 +712,10 @@ async function newCollection(families: Family[] = []) {
 
 async function newTag(smart: boolean, families: Family[] = []) {
   const draft = await editTag(
-    smart ? "Nouveau tag intelligent" : "Nouveau tag",
+    smart ? t("New smart tag") : t("New tag"),
     { name: "", color: "blue", rule: smart ? { match: "all", conditions: [] } : null },
     countRule,
-    CLASSES,
+    classLabels(),
   );
   if (!draft) return;
   const id = await run(api.createTag(draft.name, draft.color, draft.rule && JSON.stringify(draft.rule)));
@@ -711,10 +729,10 @@ async function newTag(smart: boolean, families: Family[] = []) {
 
 async function editExistingTag(tag: Tag) {
   const draft = await editTag(
-    tag.rule !== null ? "Modifier le tag intelligent" : "Modifier le tag",
+    tag.rule !== null ? t("Edit smart tag") : t("Edit tag"),
     { name: tag.name, color: tag.color, rule: tag.rule !== null ? (parseRule(tag.rule) ?? { match: "all", conditions: [] }) : null },
     countRule,
-    CLASSES,
+    classLabels(),
   );
   if (draft) await run(api.updateTag(tag.id, draft.name, draft.color, draft.rule && JSON.stringify(draft.rule)));
 }
@@ -741,9 +759,9 @@ function renderSidebar() {
        ${glyph}<span class="nav-label">${esc(label)}</span>
        <span class="badge">${count(key)}</span>
      </button>`;
-  const section = (label: string, action = "") => `<div class="nav-section"><span>${label}</span>${action}</div>`;
+  const section = (label: string, action = "") => `<div class="nav-section"><span>${esc(label)}</span>${action}</div>`;
 
-  const classes = Object.entries(CLASSES)
+  const classes = Object.entries(classLabels())
     .filter(([k]) => state.families.some((f) => matches(f, `class:${k}`)))
     .map(([k, label]) => item(`class:${k}`, label, icon("shapes")))
     .join("");
@@ -753,32 +771,32 @@ function renderSidebar() {
     .join("");
 
   const tags = (state.lib?.tags ?? [])
-    .map((t) =>
+    .map((tg) =>
       item(
-        `tag:${t.id}`,
-        t.name,
-        `<span class="nav-swatch"><span class="tag-dot${t.rule !== null ? " smart" : ""}" style="background:${tagColor(t.color)};--c:${tagColor(t.color)}"></span></span>`,
-        `data-tag="${esc(t.id)}"${t.rule !== null ? ' title="Tag intelligent : se remplit selon ses règles"' : ""}`,
+        `tag:${tg.id}`,
+        tg.name,
+        `<span class="nav-swatch"><span class="tag-dot${tg.rule !== null ? " smart" : ""}" style="background:${tagColor(tg.color)};--c:${tagColor(tg.color)}"></span></span>`,
+        `data-tag="${esc(tg.id)}"${tg.rule !== null ? ` title="${esc(t("Smart tag: fills itself according to its rules"))}"` : ""}`,
       ),
     )
     .join("");
 
   $("#sidebar-nav").innerHTML = `
-    ${item("all", "Toutes les polices", icon("all"))}
-    ${item("starred", "Favoris", icon("star"))}
-    ${item("system", "Polices système", icon("system"))}
-    ${item("library", "Importées", icon("imported"))}
-    ${item("recent", "Ajoutées récemment", icon("recent"))}
-    ${section("État")}
-    ${item("active", "Actives", icon("active"))}
-    ${item("temporary", "Temporaires", icon("temporary"))}
-    ${item("inactive", "Inactives", icon("inactive"))}
-    ${settings.google ? section("En ligne") + item("google", "Google Fonts", icon("globe")) : ""}
-    ${classes ? section("Classification") + classes : ""}
-    ${section("Collections", `<button id="new-collection" title="Nouvelle collection" aria-label="Nouvelle collection">${icon("plus", 14)}</button>`)}
-    ${collections || `<p class="muted small nav-empty">Créez une collection, puis glissez-y des cartes.</p>`}
-    ${section("Tags", `<button id="new-tag" title="Nouveau tag" aria-label="Nouveau tag">${icon("plus", 14)}</button>`)}
-    ${tags || `<p class="muted small nav-empty">Les tags intelligents se remplissent seuls selon vos règles.</p>`}
+    ${item("all", t("All fonts"), icon("all"))}
+    ${item("starred", t("Favorites"), icon("star"))}
+    ${item("system", t("System fonts"), icon("system"))}
+    ${item("library", t("Imported"), icon("imported"))}
+    ${item("recent", t("Recently added"), icon("recent"))}
+    ${section(t("Status"))}
+    ${item("active", t("Active"), icon("active"))}
+    ${item("temporary", t("Temporary"), icon("temporary"))}
+    ${item("inactive", t("Inactive"), icon("inactive"))}
+    ${settings.google ? section(t("Online")) + item("google", "Google Fonts", icon("globe")) : ""}
+    ${classes ? section(t("Classification")) + classes : ""}
+    ${section(t("Collections"), `<button id="new-collection" title="${esc(t("New collection"))}" aria-label="${esc(t("New collection"))}">${icon("plus", 14)}</button>`)}
+    ${collections || `<p class="muted small nav-empty">${t("Create a collection, then drag cards into it.")}</p>`}
+    ${section(t("Tags"), `<button id="new-tag" title="${esc(t("New tag"))}" aria-label="${esc(t("New tag"))}">${icon("plus", 14)}</button>`)}
+    ${tags || `<p class="muted small nav-empty">${t("Smart tags fill themselves according to your rules.")}</p>`}
   `;
 }
 
@@ -801,29 +819,29 @@ function renderFilterBar() {
   const chip = (name: string, value: string, label: string, on: boolean) =>
     `<button type="button" class="filter-chip${on ? " on" : ""}" data-filter="${name}" data-value="${value}">${esc(label)}</button>`;
   bar.innerHTML = `
-    <div class="filter-group"><span class="filter-label">État</span>${seg("status", f.status, [
-      ["any", "Toutes"],
-      ["active", "Actives"],
-      ["temporary", "Temporaires"],
-      ["inactive", "Inactives"],
+    <div class="filter-group"><span class="filter-label">${t("Status")}</span>${seg("status", f.status, [
+      ["any", t("All")],
+      ["active", t("Active")],
+      ["temporary", t("Temporary")],
+      ["inactive", t("Inactive")],
     ])}</div>
-    <div class="filter-group"><span class="filter-label">Source</span>${seg("source", f.source, [
-      ["any", "Toutes"],
-      ["system", "Système"],
-      ["library", "Importées"],
+    <div class="filter-group"><span class="filter-label">${t("Source")}</span>${seg("source", f.source, [
+      ["any", t("All")],
+      ["system", t("System")],
+      ["library", t("Imported")],
     ])}</div>
-    <div class="filter-group"><span class="filter-label">Classification</span>
-      ${Object.entries(CLASSES)
+    <div class="filter-group"><span class="filter-label">${t("Classification")}</span>
+      ${Object.entries(classLabels())
         .filter(([k]) => state.families.some((fam) => fam.classification === k))
         .map(([k, l]) => chip("class", k, l, f.classes.has(k)))
         .join("")}
     </div>
-    <div class="filter-group"><span class="filter-label">Caractéristiques</span>
-      ${chip("variable", "1", "Variables", f.variable)}
-      ${chip("mono", "1", "Chasse fixe", f.mono)}
-      ${chip("italic", "1", "Avec italique", f.italic)}
+    <div class="filter-group"><span class="filter-label">${t("Features")}</span>
+      ${chip("variable", "1", t("Variable fonts"), f.variable)}
+      ${chip("mono", "1", t("Monospaced"), f.mono)}
+      ${chip("italic", "1", t("With italic"), f.italic)}
     </div>
-    ${n ? `<button type="button" class="link" data-filter="reset">Réinitialiser</button>` : ""}`;
+    ${n ? `<button type="button" class="link" data-filter="reset">${t("Reset")}</button>` : ""}`;
 }
 
 function renderGoogleFilterBar(bar: HTMLElement, n: number) {
@@ -831,17 +849,17 @@ function renderGoogleFilterBar(bar: HTMLElement, n: number) {
   const chip = (name: string, value: string, label: string, on: boolean) =>
     `<button type="button" class="filter-chip${on ? " on" : ""}" data-gfilter="${name}" data-value="${value}">${esc(label)}</button>`;
   bar.innerHTML = `
-    <div class="filter-group"><span class="filter-label">Catégorie</span>
-      ${Object.entries(GOOGLE_CLASSES)
+    <div class="filter-group"><span class="filter-label">${t("Category")}</span>
+      ${Object.entries(googleClassLabels())
         .map(([k, l]) => chip("class", k, l, f.classes.has(k)))
         .join("")}
     </div>
-    <div class="filter-group"><span class="filter-label">Caractéristiques</span>
-      ${chip("variable", "1", "Variables", f.variable)}
-      ${chip("italic", "1", "Avec italique", f.italic)}
-      ${chip("hideInstalled", "1", "Masquer celles déjà présentes", f.hideInstalled)}
+    <div class="filter-group"><span class="filter-label">${t("Features")}</span>
+      ${chip("variable", "1", t("Variable fonts"), f.variable)}
+      ${chip("italic", "1", t("With italic"), f.italic)}
+      ${chip("hideInstalled", "1", t("Hide the ones already present"), f.hideInstalled)}
     </div>
-    ${n ? `<button type="button" class="link" data-gfilter="reset">Réinitialiser</button>` : ""}`;
+    ${n ? `<button type="button" class="link" data-gfilter="reset">${t("Reset")}</button>` : ""}`;
 }
 
 // ------------------------------------------------------------------ rendering: family list
@@ -853,8 +871,8 @@ function renderList() {
   $("#list-title").textContent = sidebarTitle();
   $("#list-subtitle").textContent =
     state.systemLoading && (state.sidebar === "all" || state.sidebar === "system")
-      ? "lecture des polices installées…"
-      : `${plural(families.length, "famille")}${filterCount() ? " (filtrées)" : ""}`;
+      ? t("reading installed fonts…")
+      : tn(families.length, "{n} family", "{n} families") + (filterCount() ? ` ${t("(filtered)")}` : "");
   const list = $("#family-list");
   list.style.setProperty("--preview-size", `${state.previewSize}px`);
   list.classList.toggle("rows", settings.view === "rows");
@@ -864,16 +882,16 @@ function renderList() {
   };
 
   if (!families.length) {
-    if (state.systemLoading && state.sidebar === "system") return empty(`<p>Lecture des polices installées…</p>`);
+    if (state.systemLoading && state.sidebar === "system") return empty(`<p>${t("Reading installed fonts…")}</p>`);
     if (state.sidebar === "library" && !state.families.some((f) => f.inLibrary && !f.system)) {
       return empty(`<div class="empty-icon">${icon("drop", 44)}</div>
-        <h2>Aucune police importée pour l'instant</h2>
-        <p>Glissez des fichiers ou des dossiers dans la fenêtre. Les polices déjà installées sont dans « Polices système ».</p>
-        <button class="primary" data-action="import">Importer des polices…</button>`);
+        <h2>${t("No imported fonts yet")}</h2>
+        <p>${t("Drag files or folders into the window. Fonts that are already installed are under “System fonts”.")}</p>
+        <button class="primary" data-action="import">${t("Import fonts…")}</button>`);
     }
-    return empty(`<div class="empty-icon">${icon("search", 40)}</div><h2>Aucun résultat</h2>
-      <p>Aucune famille ne correspond${filterCount() || state.search ? " à la recherche ou aux filtres" : ""}.</p>
-      ${filterCount() ? `<button data-filter="reset">Réinitialiser les filtres</button>` : ""}`);
+    return empty(`<div class="empty-icon">${icon("search", 40)}</div><h2>${t("No results")}</h2>
+      <p>${filterCount() || state.search ? t("No family matches the search or the filters.") : t("No family matches.")}</p>
+      ${filterCount() ? `<button data-filter="reset">${t("Reset the filters")}</button>` : ""}`);
   }
 
   list.classList.remove("is-empty");
@@ -915,7 +933,7 @@ function renderGoogleList() {
   const families = state.google ? visibleGoogle() : [];
   $("#list-title").textContent = "Google Fonts";
   $("#list-subtitle").textContent = state.google
-    ? `${plural(families.length, "famille")}${filterCount() || state.search ? " (filtrées)" : ""} · gratuites et libres`
+    ? `${tn(families.length, "{n} family", "{n} families")}${filterCount() || state.search ? ` ${t("(filtered)")}` : ""} · ${t("free and open source")}`
     : "";
   const empty = (html: string) => {
     list.classList.add("is-empty");
@@ -923,15 +941,15 @@ function renderGoogleList() {
   };
   if (!state.google) {
     if (state.googleError)
-      return empty(`<div class="empty-icon">${icon("cloud", 44)}</div><h2>Catalogue indisponible</h2>
-        <p>${esc(state.googleError)}</p><button class="primary" data-action="gf-retry">Réessayer</button>`);
-    return empty(`<div class="empty-icon">${icon("globe", 44)}</div><h2>Chargement du catalogue Google Fonts…</h2>
-      <p>Plus de 1 800 familles libres, à télécharger et activer en un clic.</p>`);
+      return empty(`<div class="empty-icon">${icon("cloud", 44)}</div><h2>${t("Catalog unavailable")}</h2>
+        <p>${esc(state.googleError)}</p><button class="primary" data-action="gf-retry">${t("Try again")}</button>`);
+    return empty(`<div class="empty-icon">${icon("globe", 44)}</div><h2>${t("Loading the Google Fonts catalog…")}</h2>
+      <p>${t("Over 1,800 open source families, to download and activate in one click.")}</p>`);
   }
   if (!families.length)
-    return empty(`<div class="empty-icon">${icon("search", 40)}</div><h2>Aucun résultat</h2>
-      <p>Aucune famille Google Fonts ne correspond à la recherche ou aux filtres.</p>
-      ${filterCount() ? `<button data-gfilter="reset">Réinitialiser les filtres</button>` : ""}`);
+    return empty(`<div class="empty-icon">${icon("search", 40)}</div><h2>${t("No results")}</h2>
+      <p>${t("No Google Fonts family matches the search or the filters.")}</p>
+      ${filterCount() ? `<button data-gfilter="reset">${t("Reset the filters")}</button>` : ""}`);
 
   list.classList.remove("is-empty");
   const installed = installedNames();
@@ -939,23 +957,23 @@ function renderGoogleList() {
   const rest = families.length - shown.length;
   list.innerHTML =
     shown.map((g) => renderGoogleCard(g, isInstalled(g, installed))).join("") +
-    (rest > 0 ? `<button class="more-button" data-action="gf-more">Afficher plus (${rest} restantes)</button>` : "");
+    (rest > 0 ? `<button class="more-button" data-action="gf-more">${t("Show more ({n} left)", { n: rest })}</button>` : "");
   list.querySelectorAll<HTMLElement>("[data-gfamily], [data-action='gf-more']").forEach((el) => previewObserver?.observe(el));
   if (!previewObserver) shown.forEach((g) => loadPreview(g));
 }
 
 function googleAction(g: GoogleFamily, installed: boolean, big = false): string {
-  if (state.googleBusy.has(g.family)) return `<span class="gf-busy"><span class="spinner"></span>Téléchargement…</span>`;
+  if (state.googleBusy.has(g.family)) return `<span class="gf-busy"><span class="spinner"></span>${t("Downloading…")}</span>`;
   if (installed)
-    return `<button class="gf-installed" data-action="gf-show" title="Afficher dans la bibliothèque">${icon("active", 13)}Dans la bibliothèque</button>`;
-  return `<button class="gf-get${big ? " primary" : ""}" data-action="gf-install" title="Télécharger tous les styles et les activer">${icon("cloud", 14)}${big ? "Installer et activer" : "Installer"}</button>`;
+    return `<button class="gf-installed" data-action="gf-show" title="${esc(t("Show in the library"))}">${icon("active", 13)}${t("In the library")}</button>`;
+  return `<button class="gf-get${big ? " primary" : ""}" data-action="gf-install" title="${esc(t("Download every style and activate them"))}">${icon("cloud", 14)}${big ? t("Install and activate") : t("Install")}</button>`;
 }
 
 function renderGoogleCard(g: GoogleFamily, installed: boolean): string {
   return `<div class="font-card gf-card${state.selected === `g:${g.family}` ? " selected" : ""}" data-family="g:${esc(g.family)}" data-gfamily="${esc(g.family)}">
     <div class="card-head">
       <span class="card-name">${esc(g.family)}</span>
-      <span class="card-meta">· ${plural(g.styles.length, "style")} · ${esc(categoryLabel(g))}</span>
+      <span class="card-meta">· ${tn(g.styles.length, "{n} style", "{n} styles")} · ${esc(categoryLabel(g))}</span>
       ${g.axes.length ? `<span class="pill">VAR</span>` : ""}
       <span class="card-actions">${googleAction(g, installed)}</span>
     </div>
@@ -968,16 +986,16 @@ function renderGoogleDetail(pane: HTMLElement, g: GoogleFamily) {
   const installed = isInstalled(g);
   const font = cssFamily(g);
   const text = esc(state.previewText || g.family);
-  const rank = g.popularity < 4_000_000_000 ? `n° ${g.popularity} sur ${state.google?.families.length ?? "?"}` : null;
+  const rank = g.popularity < 4_000_000_000 ? t("No. {rank} of {total}", { rank: g.popularity, total: state.google?.families.length ?? "?" }) : null;
   const rows: [string, string | null][] = [
-    ["Catégorie", categoryLabel(g)],
-    ["Créateurs", g.designers.join(", ") || null],
-    ["Styles", String(g.styles.length)],
-    ["Axes variables", g.axes.map((a) => `${a.tag} ${a.min}–${a.max}`).join(", ") || null],
-    ["Écritures", g.subsets.join(", ") || null],
-    ["Publiée le", g.dateAdded ? new Date(g.dateAdded).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : null],
-    ["Popularité", rank],
-    ["Licence", "Libre (Open Font License ou Apache)"],
+    [t("Category"), categoryLabel(g)],
+    [t("Designers"), g.designers.join(", ") || null],
+    [t("Styles"), String(g.styles.length)],
+    [t("Variable axes"), g.axes.map((a) => `${a.tag} ${a.min}–${a.max}`).join(", ") || null],
+    [t("Scripts"), g.subsets.join(", ") || null],
+    [t("Published"), g.dateAdded ? new Date(g.dateAdded).toLocaleDateString(dateLocale(), { day: "numeric", month: "short", year: "numeric" }) : null],
+    [t("Popularity"), rank],
+    [t("License"), t("Open source (Open Font License or Apache)")],
   ];
   pane.innerHTML = `
     <header class="detail-head">
@@ -986,12 +1004,12 @@ function renderGoogleDetail(pane: HTMLElement, g: GoogleFamily) {
           <strong>${esc(g.family)}</strong>
           <span class="muted">Google Fonts</span>
         </div>
-        <button class="tool" data-action="close" title="Fermer le détail" aria-label="Fermer le détail">${icon("close")}</button>
+        <button class="tool" data-action="close" title="${esc(t("Close the details"))}" aria-label="${esc(t("Close the details"))}">${icon("close")}</button>
       </div>
       <div class="hero" style="font-family:${font}">Aa</div>
       <div class="status-line">
         ${googleAction(g, installed, true)}
-        ${installed || state.googleBusy.has(g.family) ? "" : `<button data-action="gf-download" title="Ajouter à la bibliothèque sans activer">Télécharger seulement</button>`}
+        ${installed || state.googleBusy.has(g.family) ? "" : `<button data-action="gf-download" title="${esc(t("Add to the library without activating"))}">${t("Download only")}</button>`}
       </div>
     </header>
     <div class="detail-body">
@@ -999,38 +1017,38 @@ function renderGoogleDetail(pane: HTMLElement, g: GoogleFamily) {
         ${g.styles
           .map((key) => {
             const s = parseStyle(key);
-            return `<div class="style-row gf-style"><div class="muted small">${esc(styleLabel(key))} · ${s.weight}${s.italic ? " · italique" : ""}</div>
+            return `<div class="style-row gf-style"><div class="muted small">${esc(styleLabel(key))} · ${s.weight}${s.italic ? ` · ${t("italic")}` : ""}</div>
               <div class="style-preview" style="font-family:${font};font-weight:${s.weight};font-style:${s.italic ? "italic" : "normal"};font-size:${state.previewSize}px">${text}</div></div>`;
           })
           .join("")}
       </div>
-      <h3>Spécimen</h3>
-      <p class="gf-specimen" style="font-family:${font}">${esc(SPECIMEN.paragraphs[0])}</p>
+      <h3>${t("Specimen")}</h3>
+      <p class="gf-specimen" style="font-family:${font}">${esc(specimen().paragraphs[0])}</p>
       <dl class="info">${rows
         .filter(([, v]) => v)
         .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`)
         .join("")}</dl>
-      <p class="muted small">L'aperçu est servi par Google. Une fois installée, la famille rejoint votre bibliothèque (dossier « Google Fonts ») et fonctionne hors ligne.</p>
+      <p class="muted small">${t("The preview is served by Google. Once installed, the family joins your library (the “Google Fonts” folder) and works offline.")}</p>
     </div>`;
 }
 
 function statusControl(fam: Family, act = activation(fam)) {
   return act === "system"
-    ? `<span class="lock" title="${esc(ACTIVATION_LABEL.system)}">${icon("lock", 13)}</span>`
-    : `<button class="switch${act !== "inactive" ? " on" : ""} ${act}" data-action="toggle" role="switch" aria-checked="${act !== "inactive"}" title="${esc(ACTIVATION_LABEL[act])}"><span></span></button>`;
+    ? `<span class="lock" title="${esc(activationLabels().system)}">${icon("lock", 13)}</span>`
+    : `<button class="switch${act !== "inactive" ? " on" : ""} ${act}" data-action="toggle" role="switch" aria-checked="${act !== "inactive"}" title="${esc(activationLabels()[act])}"><span></span></button>`;
 }
 
 function starButton(fam: Family) {
-  return `<button class="star${fam.starred ? " on" : ""}" data-action="star" title="${fam.starred ? "Retirer des favoris" : "Ajouter aux favoris"}">${fam.starred ? "★" : "☆"}</button>`;
+  return `<button class="star${fam.starred ? " on" : ""}" data-action="star" title="${esc(fam.starred ? t("Remove from favorites") : t("Add to favorites"))}">${fam.starred ? "★" : "☆"}</button>`;
 }
 
 function renderCard(fam: Family): string {
   const act = activation(fam);
   return `<div class="font-card${fam.key === state.selected ? " selected" : ""}" data-family="${esc(fam.key)}" draggable="true">
     <div class="card-head">
-      <span class="dot ${act}" title="${esc(ACTIVATION_LABEL[act])}"></span>
+      <span class="dot ${act}" title="${esc(activationLabels()[act])}"></span>
       <span class="card-name">${esc(fam.name)}</span>
-      <span class="card-meta">· ${plural(fam.faces.length, "style")}</span>
+      <span class="card-meta">· ${tn(fam.faces.length, "{n} style", "{n} styles")}</span>
       ${fam.variable ? `<span class="pill">VAR</span>` : ""}
       ${chips(fam)}
       <span class="card-actions">${starButton(fam)}${statusControl(fam, act)}</span>
@@ -1043,11 +1061,11 @@ function renderTable(families: Family[]): string {
   const arrow = (sort: Sort, desc?: Sort) => (state.sort === sort ? " ↑" : desc && state.sort === desc ? " ↓" : "");
   const head = `<div class="t-head">
     <span></span><span></span>
-    <span>Aperçu</span>
-    <button type="button" data-sort="name">Nom${arrow("name", "name-desc")}</button>
+    <span>${t("Preview")}</span>
+    <button type="button" data-sort="name">${t("Name")}${arrow("name", "name-desc")}</button>
     <span class="t-center">★</span>
-    <span>Format</span>
-    <button type="button" data-sort="recent">Ajoutée${arrow("recent")}</button>
+    <span>${t("Format")}</span>
+    <button type="button" data-sort="recent">${t("Added")}${arrow("recent")}</button>
     <span></span>
   </div>`;
   const rows = families.map((fam) => {
@@ -1055,8 +1073,8 @@ function renderTable(families: Family[]): string {
     const open = state.expanded.has(fam.key);
     const many = fam.faces.length > 1;
     const row = `<div class="t-row${fam.key === state.selected ? " selected" : ""}" data-family="${esc(fam.key)}" draggable="true">
-      <span>${many ? `<button class="chevron${open ? " open" : ""}" data-action="expand" aria-label="Afficher les styles">${icon("chevron", 14)}</button>` : ""}</span>
-      <span class="dot ${act}" title="${esc(ACTIVATION_LABEL[act])}"></span>
+      <span>${many ? `<button class="chevron${open ? " open" : ""}" data-action="expand" aria-label="${esc(t("Show the styles"))}">${icon("chevron", 14)}</button>` : ""}</span>
+      <span class="dot ${act}" title="${esc(activationLabels()[act])}"></span>
       <span class="t-preview" style="font-family:${cssFont(fam.rep)}">${esc(state.previewText || fam.name)}</span>
       <span class="t-name">${esc(fam.name)}${many ? ` <span class="muted">(${fam.faces.length})</span>` : ""} ${chips(fam)}</span>
       <span class="t-center">${starButton(fam)}</span>
@@ -1072,7 +1090,7 @@ function renderTable(families: Family[]): string {
           (f) => `<div class="t-row t-face" data-family="${esc(fam.key)}" data-face="${esc(f.id)}">
         <span></span><span></span>
         <span class="t-preview" style="font-family:${cssFont(f)}">${esc(state.previewText || f.fullName)}</span>
-        <span class="t-name">${esc(f.style)} <span class="muted">· ${f.weight}${f.italic ? " · italique" : ""}</span></span>
+        <span class="t-name">${esc(f.style)} <span class="muted">· ${f.weight}${f.italic ? ` · ${t("italic")}` : ""}</span></span>
         <span></span>
         <span class="muted">${formatOf(f.path)}</span>
         <span class="muted">${dateOf(f.addedAt)}</span>
@@ -1132,14 +1150,14 @@ function renderDetail() {
   const face = currentFace(fam);
   const act = activation(fam);
   const tabs: [Tab, string][] = [
-    ["specimen", "Spécimen"],
-    ["styles", "Styles"],
-    ["glyphs", "Glyphes"],
-    ["languages", "Langues"],
+    ["specimen", t("Specimen")],
+    ["styles", t("Styles")],
+    ["glyphs", t("Glyphs")],
+    ["languages", t("Languages")],
     ["features", "OpenType"],
   ];
-  if (fam.variable) tabs.push(["axes", "Variable"]);
-  tabs.push(["info", "Infos"]);
+  if (fam.variable) tabs.push(["axes", t("Variable")]);
+  tabs.push(["info", t("Info")]);
 
   const scopeButton = (scope: Scope, label: string, on: boolean) =>
     `<button data-scope="${scope}" class="${on ? "on" : ""}">${label}</button>`;
@@ -1151,32 +1169,32 @@ function renderDetail() {
           <strong>${esc(fam.name)}</strong>
           ${
             fam.faces.length > 1
-              ? `<select id="face-select" title="Style affiché">${fam.faces
+              ? `<select id="face-select" title="${esc(t("Displayed style"))}">${fam.faces
                   .map((f) => `<option value="${esc(f.id)}"${f.id === face.id ? " selected" : ""}>${esc(f.style)}</option>`)
                   .join("")}</select>`
               : `<span class="muted">${esc(face.style)}</span>`
           }
         </div>
-        <button class="tool" data-action="more" title="Plus d'actions" aria-label="Plus d'actions">${icon("more")}</button>
-        <button class="tool" data-action="close" title="Fermer le détail" aria-label="Fermer le détail">${icon("close")}</button>
+        <button class="tool" data-action="more" title="${esc(t("More actions"))}" aria-label="${esc(t("More actions"))}">${icon("more")}</button>
+        <button class="tool" data-action="close" title="${esc(t("Close the details"))}" aria-label="${esc(t("Close the details"))}">${icon("close")}</button>
       </div>
       <div class="hero" style="font-family:${cssFont(face)}">Aa</div>
       <div class="status-line">
         ${
           act === "system"
-            ? `<span class="dot system"></span><span>${ACTIVATION_LABEL.system}</span>`
-            : `<div class="segmented" title="${esc(ACTIVATION_LABEL[act])}">
-                ${scopeButton("none", "Inactive", act === "inactive")}
-                ${scopeButton("temporary", "Temporaire", act === "temporary")}
-                ${scopeButton("persistent", "Active", act === "persistent")}
+            ? `<span class="dot system"></span><span>${activationLabels().system}</span>`
+            : `<div class="segmented" title="${esc(activationLabels()[act])}">
+                ${scopeButton("none", t("Off"), act === "inactive")}
+                ${scopeButton("temporary", t("Session"), act === "temporary")}
+                ${scopeButton("persistent", t("On"), act === "persistent")}
               </div>`
         }
         <span class="spacer"></span>
-        <button class="star${fam.starred ? " on" : ""}" data-action="star" title="${fam.starred ? "Retirer des favoris" : "Ajouter aux favoris"}">${fam.starred ? "★" : "☆"}</button>
+        <button class="star${fam.starred ? " on" : ""}" data-action="star" title="${esc(fam.starred ? t("Remove from favorites") : t("Add to favorites"))}">${fam.starred ? "★" : "☆"}</button>
       </div>
       <div class="detail-tags">
         ${tagsOf(fam).map(tagChip).join("")}
-        <button class="chip-add" data-action="tags">＋ Tag</button>
+        <button class="chip-add" data-action="tags">＋ ${t("Tag")}</button>
       </div>
       <nav class="tabs">
         ${tabs.map(([t, l]) => `<button data-tab="${t}" class="${state.tab === t ? "on" : ""}">${l}</button>`).join("")}
@@ -1209,7 +1227,7 @@ async function loadLanguages(id: string) {
   renderDetail();
 }
 
-const LOADING = `<p class="muted">Lecture de la police…</p>`;
+const loading = () => `<p class="muted">${t("Reading the font…")}</p>`;
 
 function emptyNote(glyph: string, title: string, text: string) {
   return `<div class="empty small-empty"><div class="empty-glyph">${glyph}</div><h2>${title}</h2><p>${text}</p></div>`;
@@ -1222,15 +1240,15 @@ function renderTab(fam: Family, face: Face): string {
 
   switch (state.tab) {
     case "specimen": {
-      const [p1, p2, p3] = SPECIMEN.paragraphs.map(esc);
+      const [p1, p2, p3] = specimen().paragraphs.map(esc);
       return `<div class="specimen" style="font-family:${font}">
-        <div class="sp-title">${esc(state.previewText || SPECIMEN.title)}</div>
-        <div class="sp-alpha">${esc(SPECIMEN.alphabet)}</div>
+        <div class="sp-title">${esc(state.previewText || specimen().title)}</div>
+        <div class="sp-alpha">${esc(specimen().alphabet)}</div>
         <div class="sp-label">24 pt</div><p class="sp-24">${p1}</p>
         <div class="sp-label">16 pt</div><p class="sp-16">${p2}</p>
         <div class="sp-label">12 pt</div><p class="sp-12">${p3}</p>
-        <div class="sp-label">Chiffres</div><p class="sp-16">${esc(SPECIMEN.figures)}</p>
-        <div class="sp-label sp-row">Sur fond
+        <div class="sp-label">${t("Figures")}</div><p class="sp-16">${esc(specimen().figures)}</p>
+        <div class="sp-label sp-row">${t("On a background")}
           <span class="sp-swatches">${["blue", "red", "green", "purple", "orange", "gray"]
             .map(
               (c) =>
@@ -1239,7 +1257,7 @@ function renderTab(fam: Family, face: Face): string {
             .join("")}</span>
         </div>
         <div class="sp-tiles">
-          <div class="sp-tile paper"><div class="sp-tile-title">${esc(SPECIMEN.title)}</div><p>${p1}</p></div>
+          <div class="sp-tile paper"><div class="sp-tile-title">${esc(specimen().title)}</div><p>${p1}</p></div>
           <div class="sp-tile" style="background:${tagColor(state.tileColor)}"><p>${esc(fam.name)}</p><div class="sp-tile-title">Aa Bb Cc 123</div></div>
         </div>
       </div>`;
@@ -1252,20 +1270,20 @@ function renderTab(fam: Family, face: Face): string {
           ${fam.faces
             .map(
               (f) => `<div class="style-row${f.id === face.id ? " selected" : ""}" data-face="${esc(f.id)}">
-                <div class="muted small">${esc(f.style)} · ${f.weight}${f.italic ? " · italique" : ""}</div>
+                <div class="muted small">${esc(f.style)} · ${f.weight}${f.italic ? ` · ${t("italic")}` : ""}</div>
                 <div class="style-preview" style="font-family:${cssFont(f)};font-size:${state.previewSize}px">${text}</div>
               </div>`,
             )
             .join("")}
         </div>
-        <h3>Cascade · ${esc(face.style)}</h3>
+        <h3>${t("Waterfall · {style}", { style: face.style })}</h3>
         <div class="waterfall" style="font-family:${font}">
           ${sizes.map((s) => `<div><span class="muted mono small">${s}</span><span style="font-size:${s}px">${text}</span></div>`).join("")}
         </div>`;
     }
 
     case "glyphs": {
-      if (!details) return LOADING;
+      if (!details) return loading();
       const test = GLYPH_GROUPS.find(([k]) => k === state.glyphGroup)?.[2] ?? (() => true);
       const q = state.glyphSearch.trim();
       const hexQuery = q.replace(/^u\+/i, "");
@@ -1281,10 +1299,10 @@ function renderTab(fam: Family, face: Face): string {
       return `
         <div class="glyph-tools">
           <label class="search-field small-search">${icon("search")}
-            <input id="glyph-search" type="search" placeholder="Caractère ou code (U+00E9)" value="${esc(state.glyphSearch)}" spellcheck="false" />
+            <input id="glyph-search" type="search" placeholder="${esc(t("Character or code (U+00E9)"))}" value="${esc(state.glyphSearch)}" spellcheck="false" />
           </label>
           <div class="chip-row">${GLYPH_GROUPS.filter(([k, , t]) => k === "all" || details.characters.some(t))
-            .map(([k, l]) => `<button type="button" class="filter-chip${state.glyphGroup === k ? " on" : ""}" data-glyph-group="${k}">${l}</button>`)
+            .map(([k, l]) => `<button type="button" class="filter-chip${state.glyphGroup === k ? " on" : ""}" data-glyph-group="${k}">${esc(t(l))}</button>`)
             .join("")}</div>
         </div>
         ${
@@ -1293,8 +1311,8 @@ function renderTab(fam: Family, face: Face): string {
           <div class="char-big">${esc(String.fromCodePoint(cp))}</div>
           <div class="char-meta">
             <div class="mono">U+${hex(cp)}</div>
-            <div class="muted small">${shown.length} sur ${details.characters.length}${details.charactersTruncated ? "+" : ""} caractères · ${face.glyphCount} glyphes</div>
-            <button data-action="copy-char" data-cp="${cp}">Copier</button>
+            <div class="muted small">${t("{shown} of {total} characters · {glyphs} glyphs", { shown: shown.length, total: `${details.characters.length}${details.charactersTruncated ? "+" : ""}`, glyphs: face.glyphCount })}</div>
+            <button data-action="copy-char" data-cp="${cp}">${t("Copy")}</button>
           </div>
         </div>`
             : ""
@@ -1303,16 +1321,16 @@ function renderTab(fam: Family, face: Face): string {
           ${shown
             .map(
               (c) =>
-                `<button class="char${c === cp ? " on" : ""}" data-cp="${c}" title="U+${hex(c)}, double-clic pour copier"><span>${esc(String.fromCodePoint(c))}</span><small>${hex(c)}</small></button>`,
+                `<button class="char${c === cp ? " on" : ""}" data-cp="${c}" title="${esc(t("U+{hex}, double-click to copy", { hex: hex(c) }))}"><span>${esc(String.fromCodePoint(c))}</span><small>${hex(c)}</small></button>`,
             )
             .join("")}
         </div>
-        ${shown.length ? "" : `<p class="muted">Aucun caractère ne correspond.</p>`}`;
+        ${shown.length ? "" : `<p class="muted">${t("No characters match.")}</p>`}`;
     }
 
     case "languages": {
       const support = state.languages.get(face.id);
-      if (!support) return LOADING;
+      if (!support) return loading();
       const yes = support.filter(Boolean).length;
       const rows = LANGUAGES.map((l, i) => ({ ...l, ok: support[i] })).filter(
         (l) => state.languageFilter === "all" || (state.languageFilter === "yes") === l.ok,
@@ -1320,13 +1338,13 @@ function renderTab(fam: Family, face: Face): string {
       const seg = (v: string, label: string, n: number) =>
         `<button type="button" data-language-filter="${v}" class="${state.languageFilter === v ? "on" : ""}">${label} <span class="count">${n}</span></button>`;
       return `<div class="segmented small-seg lang-seg">
-          ${seg("all", "Toutes", LANGUAGES.length)}${seg("yes", "Prises en charge", yes)}${seg("no", "Manquantes", LANGUAGES.length - yes)}
+          ${seg("all", t("All"), LANGUAGES.length)}${seg("yes", t("Supported"), yes)}${seg("no", t("Missing"), LANGUAGES.length - yes)}
         </div>
         <div class="languages">
           ${rows
             .map(
               (l) => `<div class="lang${l.ok ? "" : " missing"}">
-                <div class="lang-name">${esc(l.name)}${l.ok ? "" : ` <span class="miss">caractères manquants</span>`}</div>
+                <div class="lang-name">${esc(t(l.name))}${l.ok ? "" : ` <span class="miss">${t("missing characters")}</span>`}</div>
                 <div class="lang-sample" style="font-family:${font}"${l.rtl ? ' dir="rtl"' : ""}>${esc(l.sample)}</div>
               </div>`,
             )
@@ -1338,49 +1356,49 @@ function renderTab(fam: Family, face: Face): string {
       const folder = face.path.replace(/[\\/][^\\/]*$/, "");
       const file = face.path.slice(folder.length + 1);
       const rows: [string, string | number | null | undefined][] = [
-        ["Famille", face.family],
-        ["Style", face.style],
-        ["Nom complet", face.fullName],
+        [t("Family"), face.family],
+        [t("Style"), face.style],
+        [t("Full name"), face.fullName],
         ["PostScript", face.psName],
-        ["Classification", CLASSES[face.classification]],
-        ["Format", details?.format ?? formatOf(face.path)],
-        ["Taille", details ? sizeOf(details.fileSize) : null],
-        ["Graisse", face.weight],
-        ["Italique", face.italic ? "Oui" : "Non"],
-        ["Chasse fixe", face.mono ? "Oui" : "Non"],
-        ["Glyphes", face.glyphCount],
-        ["Version", face.version],
-        ["Créateur", face.designer],
-        ["Fonderie", face.manufacturer],
-        ["Licence", face.license],
+        [t("Classification"), classLabels()[face.classification]],
+        [t("Format"), details?.format ?? formatOf(face.path)],
+        [t("Size"), details ? sizeOf(details.fileSize) : null],
+        [t("Weight"), face.weight],
+        [t("Italic"), face.italic ? t("Yes") : t("No")],
+        [t("Monospaced"), face.mono ? t("Yes") : t("No")],
+        [t("Glyphs"), face.glyphCount],
+        [t("Version"), face.version],
+        [t("Designer"), face.designer],
+        [t("Foundry"), face.manufacturer],
+        [t("License"), face.license],
         ["Copyright", face.copyright],
-        [fam.system ? "Date du fichier" : "Ajoutée le", dateOf(face.addedAt)],
+        [fam.system ? t("File date") : t("Added on"), dateOf(face.addedAt)],
       ];
       return `<dl class="info">
         ${rows
           .filter(([, v]) => v !== null && v !== undefined && v !== "")
           .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`)
           .join("")}
-          <dt>Fichier</dt><dd><div class="file-row"><div>${esc(file)}<div class="muted small">${esc(folder)}</div></div>
-            <button class="tool" data-action="reveal" data-path="${esc(face.path)}" title="Afficher dans le dossier">${icon("folder")}</button></div></dd>
+          <dt>${t("File")}</dt><dd><div class="file-row"><div>${esc(file)}<div class="muted small">${esc(folder)}</div></div>
+            <button class="tool" data-action="reveal" data-path="${esc(face.path)}" title="${esc(t("Show in folder"))}">${icon("folder")}</button></div></dd>
         </dl>`;
     }
 
     case "features": {
-      if (!details) return LOADING;
+      if (!details) return loading();
       if (!details.features.length)
-        return emptyNote(`<span style="font-family:${font}">fi</span>`, "Aucune fonctionnalité OpenType", `${esc(fam.name)} n'en déclare aucune.`);
+        return emptyNote(`<span style="font-family:${font}">fi</span>`, t("No OpenType features"), esc(t("{name} declares none.", { name: fam.name })));
       const settingsCSS = [...state.features.entries()].map(([t, on]) => `'${cssTag(t)}' ${on ? 1 : 0}`).join(", ");
       return `
         <div class="feature-preview" style="font-family:${font};font-size:${Math.max(state.previewSize, 28)}px;font-feature-settings:${settingsCSS || "normal"}" contenteditable="plaintext-only" spellcheck="false">${text} 0123456789 1/2 fi fl</div>
-        <div class="muted small">${plural(details.features.length, "fonctionnalité")}. Cliquez pour l'activer ou la désactiver dans l'aperçu</div>
+        <div class="muted small">${t("{count}. Click to turn it on or off in the preview", { count: tn(details.features.length, "{n} feature", "{n} features") })}</div>
         <div class="features">
           ${details.features
             .map((tag) => {
               const on = state.features.get(tag) ?? DEFAULT_ON.has(tag);
               const label =
-                FEATURE_NAMES[tag] ??
-                (/^ss\d\d$/.test(tag) ? `Jeu stylistique ${+tag.slice(2)}` : /^cv\d\d$/.test(tag) ? `Variante de caractère ${+tag.slice(2)}` : tag);
+                featureNames()[tag] ??
+                (/^ss\d\d$/.test(tag) ? t("Stylistic set {n}", { n: +tag.slice(2) }) : /^cv\d\d$/.test(tag) ? t("Character variant {n}", { n: +tag.slice(2) }) : tag);
               return `<div class="feature"><button type="button" class="switch${on ? " on" : ""}" data-feature="${esc(tag)}" role="switch" aria-checked="${on}" aria-label="${esc(label)}"><span></span></button>
                 <span>${esc(label)}</span><span class="mono muted">${esc(tag)}</span></div>`;
             })
@@ -1389,7 +1407,7 @@ function renderTab(fam: Family, face: Face): string {
     }
 
     case "axes": {
-      if (!details) return LOADING;
+      if (!details) return loading();
       const settingsCSS = details.axes.map((a) => `'${cssTag(a.tag)}' ${state.axes.get(a.tag) ?? a.default}`).join(", ");
       return `
         <div class="feature-preview" style="font-family:${font};font-size:${Math.max(state.previewSize, 36)}px;font-variation-settings:${settingsCSS}">${text}</div>
@@ -1402,7 +1420,7 @@ function renderTab(fam: Family, face: Face): string {
                 <span class="mono small">${Math.round(v * 10) / 10}</span></label>`;
             })
             .join("")}
-          <button data-action="reset-axes">Valeurs par défaut</button>
+          <button data-action="reset-axes">${t("Default values")}</button>
         </div>`;
     }
   }
@@ -1452,36 +1470,36 @@ function familyMenu(families: Family[]): (MenuItem | "-")[] {
   const items: (MenuItem | "-")[] = [];
   if (!first.system) {
     items.push(
-      { label: "Activer", action: () => setScope(families, "persistent") },
-      { label: "Activer temporairement", action: () => setScope(families, "temporary") },
-      { label: "Désactiver", action: () => setScope(families, "none") },
+      { label: t("Activate"), action: () => setScope(families, "persistent") },
+      { label: t("Activate temporarily"), action: () => setScope(families, "temporary") },
+      { label: t("Deactivate"), action: () => setScope(families, "none") },
       "-",
     );
   }
   items.push(
-    { label: first.starred ? "Retirer des favoris" : "Ajouter aux favoris", action: () => setStarred(first, !first.starred) },
+    { label: first.starred ? t("Remove from favorites") : t("Add to favorites"), action: () => setStarred(first, !first.starred) },
     "-",
-    { label: "Ajouter à une collection", header: true },
+    { label: t("Add to a collection"), header: true },
     ...(state.lib?.collections ?? []).map((c) => ({
       label: `  ${c.name}`,
-      action: () => libraryAction(families, () => api.addToCollection(c.id, names), `Ajoutée à « ${c.name} »`),
+      action: () => libraryAction(families, () => api.addToCollection(c.id, names), t("Added to “{name}”", { name: c.name })),
     })),
-    { label: "  Nouvelle collection…", action: () => newCollection(families) },
+    { label: `  ${t("New collection…")}`, action: () => newCollection(families) },
     "-",
     ...tagItems(families),
   );
   if (state.sidebar.startsWith("col:")) {
     const id = state.sidebar.slice(4);
-    items.push({ label: "Retirer de cette collection", action: () => run(api.removeFromCollection(id, names)) });
+    items.push({ label: t("Remove from this collection"), action: () => run(api.removeFromCollection(id, names)) });
   }
   items.push("-");
-  if (first.system) items.push({ label: "Copier le fichier dans la bibliothèque", action: () => copyToLibrary(families) });
-  items.push({ label: "Afficher dans le dossier", action: () => revealItemInDir(first.rep.path).catch((e) => toast(String(e), true)) });
+  if (first.system) items.push({ label: t("Copy the file into the library"), action: () => copyToLibrary(families) });
+  items.push({ label: t("Show in folder"), action: () => revealItemInDir(first.rep.path).catch((e) => toast(String(e), true)) });
   if (first.inLibrary) {
     items.push(
       first.system
-        ? { label: "Oublier favori, tags et collections…", danger: true, action: () => removeFamilies(families) }
-        : { label: "Retirer de la bibliothèque…", danger: true, action: () => removeFamilies(families) },
+        ? { label: t("Forget favorite, tags and collections…"), danger: true, action: () => removeFamilies(families) }
+        : { label: t("Remove from library…"), danger: true, action: () => removeFamilies(families) },
     );
   }
   return items;
@@ -1492,12 +1510,12 @@ function tagItems(families: Family[]): (MenuItem | "-")[] {
   const names = families.map((f) => f.name);
   const manual = (state.lib?.tags ?? []).filter((t) => t.rule === null);
   return [
-    { label: "Tags", header: true },
+    { label: t("Tags"), header: true },
     ...manual.map((t) => {
       const on = families.every((f) => hasTag(f, t.id));
       return { label: `${on ? "✓" : "  "} ${t.name}`, action: () => libraryAction(families, () => api.setTagged(t.id, names, !on)) };
     }),
-    { label: "  Nouveau tag…", action: () => newTag(false, families) },
+    { label: `  ${t("New tag…")}`, action: () => newTag(false, families) },
   ];
 }
 
@@ -1505,20 +1523,20 @@ function tagMenu(id: string): (MenuItem | "-")[] {
   const tag = state.lib?.tags.find((t) => t.id === id);
   if (!tag) return [];
   return [
-    { label: "Activer les polices du tag", action: () => setScope(familiesWithTag(id), "persistent") },
-    { label: "Activer temporairement", action: () => setScope(familiesWithTag(id), "temporary") },
-    { label: "Désactiver les polices du tag", action: () => setScope(familiesWithTag(id), "none") },
+    { label: t("Activate the tag's fonts"), action: () => setScope(familiesWithTag(id), "persistent") },
+    { label: t("Activate temporarily"), action: () => setScope(familiesWithTag(id), "temporary") },
+    { label: t("Deactivate the tag's fonts"), action: () => setScope(familiesWithTag(id), "none") },
     "-",
-    { label: tag.rule !== null ? "Modifier les règles…" : "Modifier…", action: () => editExistingTag(tag) },
+    { label: tag.rule !== null ? t("Edit the rules…") : t("Edit…"), action: () => editExistingTag(tag) },
     {
-      label: "Supprimer le tag…",
+      label: t("Delete the tag…"),
       danger: true,
       action: async () => {
-        const ok = await ask(`Supprimer le tag « ${tag.name} » ? Les polices ne sont pas supprimées.`, {
-          title: "Supprimer le tag",
+        const ok = await ask(t("Delete the tag “{name}”? The fonts are not deleted.", { name: tag.name }), {
+          title: t("Delete the tag"),
           kind: "warning",
-          okLabel: "Supprimer",
-          cancelLabel: "Annuler",
+          okLabel: t("Delete"),
+          cancelLabel: t("Cancel"),
         });
         if (ok) run(api.deleteTag(id));
       },
@@ -1530,18 +1548,18 @@ function collectionMenu(id: string): (MenuItem | "-")[] {
   const collection = state.lib?.collections.find((c) => c.id === id);
   if (!collection) return [];
   return [
-    { label: "Activer la collection", action: () => setScope(familiesInCollection(id), "persistent") },
-    { label: "Activer temporairement", action: () => setScope(familiesInCollection(id), "temporary") },
-    { label: "Désactiver la collection", action: () => setScope(familiesInCollection(id), "none") },
+    { label: t("Activate the collection"), action: () => setScope(familiesInCollection(id), "persistent") },
+    { label: t("Activate temporarily"), action: () => setScope(familiesInCollection(id), "temporary") },
+    { label: t("Deactivate the collection"), action: () => setScope(familiesInCollection(id), "none") },
     "-",
     {
-      label: "Renommer…",
+      label: t("Rename…"),
       action: async () => {
-        const name = await promptText("Renommer la collection", collection.name);
+        const name = await promptText(t("Rename the collection"), collection.name);
         if (name) run(api.renameCollection(id, name));
       },
     },
-    { label: "Supprimer la collection", danger: true, action: () => run(api.deleteCollection(id)) },
+    { label: t("Delete the collection"), danger: true, action: () => run(api.deleteCollection(id)) },
   ];
 }
 
@@ -1598,8 +1616,8 @@ function wire() {
     const addTag = target.closest<HTMLElement>("#new-tag");
     if (addTag)
       return menuBelow(addTag, [
-        { label: "Nouveau tag…", action: () => newTag(false) },
-        { label: "Nouveau tag intelligent…", action: () => newTag(true) },
+        { label: t("New tag…"), action: () => newTag(false) },
+        { label: t("New smart tag…"), action: () => newTag(true) },
       ]);
     const nav = target.closest<HTMLElement>("[data-nav]");
     if (nav) {
@@ -1639,10 +1657,10 @@ function wire() {
     el.classList.remove("drop-target");
     if (el.dataset.tag) {
       const tag = state.lib?.tags.find((t) => t.id === el.dataset.tag);
-      return void libraryAction([fam], () => api.setTagged(el.dataset.tag!, [fam.name], true), `Tag « ${tag?.name ?? ""} » ajouté`);
+      return void libraryAction([fam], () => api.setTagged(el.dataset.tag!, [fam.name], true), t("Tag “{name}” added", { name: tag?.name ?? "" }));
     }
     const collection = state.lib?.collections.find((c) => c.id === el.dataset.collection);
-    libraryAction([fam], () => api.addToCollection(el.dataset.collection!, [fam.name]), `Ajoutée à « ${collection?.name ?? ""} »`);
+    libraryAction([fam], () => api.addToCollection(el.dataset.collection!, [fam.name]), t("Added to “{name}”", { name: collection?.name ?? "" }));
   });
 
   const list = $("#family-list");
@@ -1738,14 +1756,14 @@ function wire() {
     menuBelow(
       e.currentTarget as HTMLElement,
       isGoogle()
-        ? (Object.entries(GOOGLE_SORTS) as [GoogleSort, string][]).map(([key, label]) => ({
+        ? (Object.entries(googleSortLabels()) as [GoogleSort, string][]).map(([key, label]) => ({
             label: `${state.googleSort === key ? "✓" : "  "} ${label}`,
             action: () => {
               state.googleSort = key;
               renderList();
             },
           }))
-        : (Object.entries(SORTS) as [Sort, string][]).map(([key, label]) => ({
+        : (Object.entries(sortLabels()) as [Sort, string][]).map(([key, label]) => ({
         label: `${state.sort === key ? "✓" : "  "} ${label}`,
         action: () => {
           state.sort = key;
@@ -1876,8 +1894,8 @@ function wire() {
 
   $("#import-button").addEventListener("click", (e) =>
     menuBelow(e.currentTarget as HTMLElement, [
-      { label: "Fichiers de polices…", action: () => importDialog() },
-      { label: "Dossier…", action: () => importDialog(true) },
+      { label: t("Font files…"), action: () => importDialog() },
+      { label: t("Folder…"), action: () => importDialog(true) },
     ]),
   );
 
@@ -1906,6 +1924,7 @@ function wire() {
     settingsDialog.querySelectorAll<HTMLElement>("[data-settings-page]").forEach((page) => (page.hidden = page.dataset.settingsPage !== tab));
   };
   const syncSettings = () => {
+    $<HTMLSelectElement>("#setting-language").value = settings.language;
     $<HTMLInputElement>("#setting-copy").checked = settings.copyOnImport;
     $<HTMLInputElement>("#setting-inspector").checked = settings.inspector;
     $("#library-path").textContent = state.lib?.fontsDir ?? "";
@@ -1935,6 +1954,14 @@ function wire() {
       applyTheme();
       syncSettings();
     }
+  });
+  $<HTMLSelectElement>("#setting-language").addEventListener("change", (e) => {
+    settings.language = (e.target as HTMLSelectElement).value as Language;
+    applyLanguage();
+    syncSettings();
+    showSettingsTab(settingsDialog.querySelector<HTMLElement>("[data-settings-tab].on")?.dataset.settingsTab ?? "general");
+    syncGoogleStatus();
+    render();
   });
   $<HTMLInputElement>("#setting-copy").addEventListener("change", (e) => {
     settings.copyOnImport = (e.target as HTMLInputElement).checked;
@@ -2010,8 +2037,8 @@ function wire() {
 function copyChar(cp: string | undefined) {
   if (!cp) return;
   navigator.clipboard.writeText(String.fromCodePoint(+cp)).then(
-    () => toast("Caractère copié"),
-    () => toast("Copie impossible", true),
+    () => toast(t("Character copied")),
+    () => toast(t("Copy failed"), true),
   );
 }
 
@@ -2019,8 +2046,8 @@ async function importDialog(directory = false) {
   const picked = await open({
     multiple: true,
     directory,
-    title: directory ? "Importer un dossier de polices" : "Importer des polices",
-    filters: directory ? undefined : [{ name: "Polices", extensions: ["ttf", "otf", "ttc", "otc"] }],
+    title: directory ? t("Import a folder of fonts") : t("Import fonts"),
+    filters: directory ? undefined : [{ name: t("Fonts"), extensions: ["ttf", "otf", "ttc", "otc"] }],
   });
   const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
   importPaths(paths);
@@ -2030,6 +2057,7 @@ async function start() {
   // `npm run dev` opened in a plain browser: use demo data instead of the Rust backend.
   if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) await import("./dev/mock");
   applyTheme();
+  applyLanguage();
   // Room for the macOS window buttons drawn over the sidebar (overlay title bar).
   if (/Mac/.test(navigator.userAgent)) document.documentElement.classList.add("mac");
   hydrateIcons();

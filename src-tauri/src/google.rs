@@ -193,7 +193,7 @@ fn safe_name(name: &str) -> String {
 pub fn download(family: &GoogleFamily, root: &Path) -> Result<Vec<PathBuf>, String> {
     let faces = parse_css(&get_text(&css_url(family))?);
     if faces.is_empty() {
-        return Err(format!("{} : aucun fichier proposé par Google Fonts", family.family));
+        return Err(format!("{}: Google Fonts offers no file", family.family));
     }
     let name = safe_name(&family.family);
     let folder = root.join(&name);
@@ -206,14 +206,14 @@ pub fn download(family: &GoogleFamily, root: &Path) -> Result<Vec<PathBuf>, Stri
         let bytes = agent
             .get(&url)
             .call()
-            .map_err(|e| format!("Téléchargement impossible : {e}"))?
+            .map_err(|e| format!("Download failed: {e}"))?
             .body_mut()
             .with_config()
             .limit(64 * 1024 * 1024)
             .read_to_vec()
             .map_err(|e| e.to_string())?;
         if ttf_parser::Face::parse(&bytes, 0).is_err() {
-            return Err(format!("{} : fichier reçu illisible", family.family));
+            return Err(format!("{}: the downloaded file is unreadable", family.family));
         }
         fs::write(&path, bytes).map_err(|e| e.to_string())?;
         written.push(path);

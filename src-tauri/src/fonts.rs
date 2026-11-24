@@ -366,7 +366,7 @@ mod tests {
         }
         let started = std::time::Instant::now();
         let faces = scan_system();
-        eprintln!("{} styles système en {:?}", faces.len(), started.elapsed());
+        eprintln!("{} system styles in {:?}", faces.len(), started.elapsed());
         assert!(!faces.is_empty());
         assert!(faces.iter().all(|f| f.id.starts_with("sys-") && !f.family.starts_with('.')));
         let unique: HashSet<_> = faces.iter().map(|f| &f.ps_name).collect();

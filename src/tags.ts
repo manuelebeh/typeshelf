@@ -1,3 +1,4 @@
+import { t, tn } from "./i18n";
 import { FIELDS, OPS, defaultCondition, type Condition, type Field, type Rule } from "./rules";
 
 /** Named palette; the backend only accepts these keys. */
@@ -76,7 +77,7 @@ export function editTag(
 
   const updateCount = () => {
     const n = count(rule);
-    counter.textContent = rule.conditions.length ? `${n} famille(s) correspondent actuellement.` : "Ajoutez une condition.";
+    counter.textContent = rule.conditions.length ? tn(n, "{n} family currently matches.", "{n} families currently match.") : t("Add a condition.");
   };
 
   const drawConditions = () => {
@@ -86,7 +87,7 @@ export function editTag(
         const field = el(
           "select",
           {},
-          Object.entries(FIELDS).map(([key, f]) => el("option", { value: key, textContent: f.label, selected: key === c.field })),
+          Object.entries(FIELDS).map(([key, f]) => el("option", { value: key, textContent: t(f.label), selected: key === c.field })),
         );
         field.onchange = () => {
           rule.conditions[i] = defaultCondition(field.value as Field);
@@ -95,7 +96,7 @@ export function editTag(
         const op = el(
           "select",
           {},
-          OPS[kind].map((o) => el("option", { value: o.op, textContent: o.label, selected: o.op === c.op })),
+          OPS[kind].map((o) => el("option", { value: o.op, textContent: t(o.label), selected: o.op === c.op })),
         );
         op.onchange = () => {
           c.op = op.value as Condition["op"];
@@ -118,7 +119,7 @@ export function editTag(
           const input = el("input", {
             type: kind === "text" ? "text" : "number",
             value: c.value,
-            placeholder: kind === "text" ? "texte" : "valeur",
+            placeholder: kind === "text" ? t("text") : t("value"),
           });
           input.oninput = () => {
             c.value = input.value;
@@ -127,7 +128,7 @@ export function editTag(
           value = input;
         }
 
-        const remove = el("button", { type: "button", className: "icon", textContent: "−", title: "Retirer la condition" });
+        const remove = el("button", { type: "button", className: "icon", textContent: "−", title: t("Remove the condition") });
         remove.onclick = () => {
           rule.conditions.splice(i, 1);
           drawConditions();

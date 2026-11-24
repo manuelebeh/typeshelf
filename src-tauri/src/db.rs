@@ -80,7 +80,7 @@ impl Db {
             return Ok(());
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        let collections = ["Projets", "Identité de marque", "Web & écrans", "À l'essai"];
+        let collections = ["Projects", "Brand identity", "Web & screens", "To try"];
         for (i, name) in collections.iter().enumerate() {
             self.conn
                 .execute(
@@ -94,13 +94,13 @@ impl Db {
             format!(r#"{{"match":"all","conditions":[{{"field":"{field}","op":"{op}","value":"{value}"}}]}}"#)
         };
         let tags: [(&str, &str, Option<String>); 7] = [
-            ("Titrage", "red", None),
-            ("Texte courant", "blue", None),
-            ("Manuscrite", "purple", None),
-            ("Fantaisie", "orange", None),
-            ("Variables", "teal", Some(rule("variable", "isTrue", ""))),
-            ("Chasse fixe", "gray", Some(rule("mono", "isTrue", ""))),
-            ("Script & calligraphie", "pink", Some(rule("classification", "is", "script"))),
+            ("Headings", "red", None),
+            ("Body text", "blue", None),
+            ("Handwritten", "purple", None),
+            ("Fancy", "orange", None),
+            ("Variable", "teal", Some(rule("variable", "isTrue", ""))),
+            ("Monospace", "gray", Some(rule("mono", "isTrue", ""))),
+            ("Script & calligraphy", "pink", Some(rule("classification", "is", "script"))),
         ];
         for (i, (name, color, rule)) in tags.iter().enumerate() {
             self.conn

@@ -11,7 +11,7 @@ const BASE = "http://localhost:47391";
 function withTimeout(promise, ms) {
   return Promise.race([
     promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Typeshelf ne répond pas")), ms)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(createPanel.t("Typeshelf is not responding"))), ms)),
   ]);
 }
 
@@ -28,10 +28,10 @@ async function call(method, path, body) {
       method === "GET" ? 3000 : 120000,
     );
   } catch (e) {
-    throw new Error(`Typeshelf injoignable (${e && e.message ? e.message : e})`);
+    throw new Error(`${createPanel.t("Typeshelf is not open or does not accept plugins.")} (${e && e.message ? e.message : e})`);
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
+  if (!res.ok) throw new Error(data.error || createPanel.t("Error {status}", { status: res.status }));
   return data;
 }
 

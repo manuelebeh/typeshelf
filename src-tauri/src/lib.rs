@@ -222,7 +222,7 @@ fn set_starred(state: State<AppState>, family: String, starred: bool) -> CmdResu
 fn create_collection(state: State<AppState>, name: String) -> CmdResult<String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("Le nom ne peut pas être vide".into());
+        return Err("The name cannot be empty".into());
     }
     let id = uuid::Uuid::new_v4().to_string();
     lock(&state).create_collection(&id, name, now())?;
@@ -233,7 +233,7 @@ fn create_collection(state: State<AppState>, name: String) -> CmdResult<String> 
 fn rename_collection(state: State<AppState>, id: String, name: String) -> CmdResult<()> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("Le nom ne peut pas être vide".into());
+        return Err("The name cannot be empty".into());
     }
     lock(&state).rename_collection(&id, name)
 }
@@ -263,13 +263,13 @@ const TAG_COLORS: &[&str] = &["red", "orange", "yellow", "green", "teal", "blue"
 
 fn validate_tag(name: &str, color: &str, rule: &Option<String>) -> CmdResult<()> {
     if name.trim().is_empty() {
-        return Err("Le nom ne peut pas être vide".into());
+        return Err("The name cannot be empty".into());
     }
     if !TAG_COLORS.contains(&color) {
         return Err(format!("Couleur inconnue : {color}"));
     }
     if let Some(rule) = rule {
-        serde_json::from_str::<serde_json::Value>(rule).map_err(|e| format!("Règle invalide : {e}"))?;
+        serde_json::from_str::<serde_json::Value>(rule).map_err(|e| format!("Invalid rule: {e}"))?;
     }
     Ok(())
 }
@@ -441,7 +441,7 @@ pub fn run() {
             plugin_api_config,
         ])
         .build(tauri::generate_context!())
-        .expect("échec du démarrage de Typeshelf");
+        .expect("failed to start Typeshelf");
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
@@ -464,7 +464,7 @@ mod tests {
         assert_eq!(tags.iter().filter(|t| t.rule.is_some()).count(), 3);
         for tag in &tags {
             if let Some(rule) = &tag.rule {
-                serde_json::from_str::<serde_json::Value>(rule).expect("règle par défaut valide");
+                serde_json::from_str::<serde_json::Value>(rule).expect("valid default rule");
             }
         }
         db.delete_tag(&tags[0].id).unwrap();
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn import_and_activate_round_trip() {
         let Some(source) = std::env::var_os("TYPESHELF_TEST_FONTS").map(PathBuf::from) else {
-            eprintln!("TYPESHELF_TEST_FONTS non défini : test ignoré");
+            eprintln!("TYPESHELF_TEST_FONTS not set: test skipped");
             return;
         };
         let root = std::env::temp_dir().join(format!("typeshelf-test-{}", uuid::Uuid::new_v4()));
@@ -489,7 +489,7 @@ mod tests {
 
         let src = source.to_string_lossy().into_owned();
         let first = import_blocking(&state, vec![src.clone()], true).unwrap();
-        assert!(first.imported > 0, "aucun style importé : {first:?}");
+        assert!(first.imported > 0, "no style imported: {first:?}");
         assert!(first.failures.is_empty(), "{:?}", first.failures);
 
         // Re-importing the same folder must not duplicate anything.
@@ -499,9 +499,9 @@ mod tests {
 
         let faces = lock(&state).faces().unwrap();
         assert!(faces.iter().all(|f| f.path.starts_with(state.fonts_dir.to_str().unwrap())));
-        assert!(faces.iter().any(|f| f.variable), "une police variable était attendue");
+        assert!(faces.iter().any(|f| f.variable), "a variable font was expected");
         let collection_faces = faces.iter().filter(|f| f.path.ends_with(".ttc")).count();
-        assert!(collection_faces > 1, "les styles du .ttc doivent être importés séparément");
+        assert!(collection_faces > 1, "the styles of the .ttc must be imported separately");
 
         // Activation on the real OS, using a font that is not installed system-wide.
         {
@@ -539,7 +539,7 @@ mod tests {
         // Manual and smart tags.
         {
             let mut db = lock(&state);
-            let manual = Tag { id: "t1".into(), name: "Titrage".into(), color: "red".into(), rule: None, created_at: now() };
+            let manual = Tag { id: "t1".into(), name: "Headings".into(), color: "red".into(), rule: None, created_at: now() };
             db.save_tag(&manual).unwrap();
             let ids: Vec<String> = faces.iter().take(2).map(|f| f.id.clone()).collect();
             db.set_tagged("t1", &ids, true).unwrap();
@@ -571,7 +571,7 @@ mod tests {
 
         // System fonts: found by id (as the tsfont protocol does) and served as standalone fonts.
         if let Some(sys) = system_faces(&state).iter().find(|f| f.path.ends_with(".ttc")) {
-            let found = lookup_face(&state, &sys.id).expect("police système retrouvée par son id");
+            let found = lookup_face(&state, &sys.id).expect("system font found by its id");
             let data = fonts::map(Path::new(&found.path)).unwrap();
             let bytes = fonts::face_bytes(&data, found.face_index).unwrap();
             assert_eq!(ttf_parser::Face::parse(&bytes, 0).unwrap().number_of_glyphs(), found.glyph_count);

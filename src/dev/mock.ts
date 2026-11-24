@@ -52,7 +52,7 @@ const systemFaces: Face[] = [
   face(`${SUP}/Apple Chancery.ttf`, "Apple Chancery", "Chancery", { classification: "script" }),
 ].map((f, i) => ({ ...f, id: `sys-demo-${i}`, addedAt: 1_700_000_000 + i * 86400 }));
 
-const collections: Collection[] = ["Projets", "Identité de marque", "Web & écrans", "À l'essai"].map((name, i) => ({
+const collections: Collection[] = ["Projects", "Brand identity", "Web & screens", "To try"].map((name, i) => ({
   id: `default-col-${i}`,
   name,
   createdAt: i,
@@ -60,13 +60,13 @@ const collections: Collection[] = ["Projets", "Identité de marque", "Web & écr
 const membership: Record<string, string[]> = { "default-col-0": [faces[0].id, faces[1].id, faces[2].id] };
 const rule = (field: string, op: string, value = "") => JSON.stringify({ match: "all", conditions: [{ field, op, value }] });
 const tags: Tag[] = [
-  { id: "default-tag-0", name: "Titrage", color: "red", rule: null, createdAt: 0 },
-  { id: "default-tag-1", name: "Texte courant", color: "blue", rule: null, createdAt: 1 },
-  { id: "default-tag-2", name: "Manuscrite", color: "purple", rule: null, createdAt: 2 },
-  { id: "default-tag-3", name: "Fantaisie", color: "orange", rule: null, createdAt: 3 },
-  { id: "default-tag-4", name: "Variables", color: "teal", rule: rule("variable", "isTrue"), createdAt: 4 },
-  { id: "default-tag-5", name: "Chasse fixe", color: "gray", rule: rule("mono", "isTrue"), createdAt: 5 },
-  { id: "default-tag-6", name: "Script & calligraphie", color: "pink", rule: rule("classification", "is", "script"), createdAt: 6 },
+  { id: "default-tag-0", name: "Headings", color: "red", rule: null, createdAt: 0 },
+  { id: "default-tag-1", name: "Body text", color: "blue", rule: null, createdAt: 1 },
+  { id: "default-tag-2", name: "Handwritten", color: "purple", rule: null, createdAt: 2 },
+  { id: "default-tag-3", name: "Fancy", color: "orange", rule: null, createdAt: 3 },
+  { id: "default-tag-4", name: "Variable", color: "teal", rule: rule("variable", "isTrue"), createdAt: 4 },
+  { id: "default-tag-5", name: "Monospace", color: "gray", rule: rule("mono", "isTrue"), createdAt: 5 },
+  { id: "default-tag-6", name: "Script & calligraphy", color: "pink", rule: rule("classification", "is", "script"), createdAt: 6 },
 ];
 const tagMembership: Record<string, string[]> = { "default-tag-0": [faces[6].id] };
 const activation: Record<string, Scope> = { [faces[3].path]: "persistent", [faces[4].path]: "temporary" };
@@ -99,7 +99,7 @@ const gf = (family: string, category: string, styles: string[], popularity: numb
   category,
   styles,
   axes: [],
-  designers: ["Studio de démonstration"],
+  designers: ["Demo Studio"],
   subsets: ["latin", "latin-ext"],
   popularity,
   dateAdded,
@@ -208,7 +208,7 @@ let callbackId = 0;
   invoke: async (cmd: string, args: unknown) => {
     if (cmd.startsWith("plugin:")) return ++callbackId;
     const handler = commands[cmd];
-    if (!handler) throw new Error(`Commande inconnue en mode démo : ${cmd}`);
+    if (!handler) throw new Error(`Unknown command in demo mode: ${cmd}`);
     return structuredClone(await handler(args));
   },
 };
