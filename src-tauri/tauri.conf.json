@@ -42,6 +42,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../plugins/photoshop/": "plugins/photoshop/",
+      "../plugins/illustrator/": "plugins/illustrator/",
+      "../plugins/after-effects/": "plugins/after-effects/",
+      "../plugins/sketch/": "plugins/sketch/"
+    }
   }
 }

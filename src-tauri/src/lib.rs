@@ -4,6 +4,7 @@ mod fonts;
 mod google;
 mod model;
 mod plugin_api;
+mod plugin_install;
 
 use db::Db;
 use model::{Face, FaceDetails, ImportSummary, Library, Scope, Tag};
@@ -392,6 +393,30 @@ fn plugin_api_config(enabled: bool, google: bool) -> plugin_api::ApiStatus {
     plugin_api::configure(enabled, google)
 }
 
+fn plugin_env(app: &AppHandle) -> CmdResult<plugin_install::Env> {
+    let resources = app.path().resource_dir().map_err(|e| e.to_string())?.join("plugins");
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    plugin_install::Env::new(resources, data_dir).ok_or_else(|| "Plugins cannot be installed on this system".to_string())
+}
+
+/// The bundled plugins and whether each one is installed. Empty where none applies (Linux).
+#[tauri::command]
+async fn plugins_list(app: AppHandle) -> CmdResult<Vec<plugin_install::PluginState>> {
+    tauri::async_runtime::spawn_blocking(move || Ok(plugin_env(&app).map(|env| plugin_install::list(&env)).unwrap_or_default()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn plugin_install(app: AppHandle, id: String) -> CmdResult<plugin_install::InstallOutcome> {
+    tauri::async_runtime::spawn_blocking(move || plugin_install::install(&plugin_env(&app)?, &id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn plugin_uninstall(app: AppHandle, id: String) -> CmdResult<plugin_install::PluginState> {
+    tauri::async_runtime::spawn_blocking(move || plugin_install::uninstall(&plugin_env(&app)?, &id)).await.map_err(|e| e.to_string())?
+}
+
 // ---------------------------------------------------------------- entry point
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -439,6 +464,9 @@ pub fn run() {
             google_download,
             plugin_api_status,
             plugin_api_config,
+            plugins_list,
+            plugin_install,
+            plugin_uninstall,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Typeshelf");

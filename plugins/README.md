@@ -18,6 +18,27 @@ The panels follow the system language (English, or French on a French system).
 every plugin must be self-contained: after changing `shared/`, run `npm run plugins:sync`.
 `npm run dev`, then open `/plugins/shared/preview.html` to see the panel with sample data.
 
+## Installing from Typeshelf
+
+**Settings ▸ Plugins** lists the plugins bundled with the app, with an *Install*, *Install update* or
+*Remove* button for each one (macOS and Windows; Sketch is macOS only):
+
+| Plugin | Copied to (`~/Library/Application Support/` on macOS, `%APPDATA%\` on Windows) |
+| --- | --- |
+| Photoshop | `Adobe/UXP/Plugins/External/dev.typeshelf.photoshop`, registered in `Adobe/UXP/PluginsInfo/v1/PS.json` |
+| Illustrator | `Adobe/CEP/extensions/dev.typeshelf.illustrator` |
+| After Effects | `Adobe/CEP/extensions/dev.typeshelf.aftereffects` |
+| Sketch | `com.bohemiancoding.sketch3/Plugins/Typeshelf.sketchplugin` |
+
+- Photoshop must be closed while its plugin is installed or removed, because it rewrites `PS.json`
+  when it quits. Other entries of `PS.json` are kept as they are.
+- Illustrator and After Effects only load unsigned CEP extensions in debug mode. When the bundled
+  extension has no signature (`META-INF/signatures.xml`), installing it sets `PlayerDebugMode` to `1`
+  for CSXS 9 to 13 where it was off, and removing the last Typeshelf extension removes the keys
+  Typeshelf set (recorded in `plugins.json` in the app's data folder).
+- An application that is open loads a newly installed plugin after a restart.
+- Hidden files such as `.debug` are not copied.
+
 ## Installing for development
 
 ### Photoshop
