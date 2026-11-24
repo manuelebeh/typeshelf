@@ -79,10 +79,7 @@ impl Db {
         if version >= 1 {
             return Ok(());
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let collections = ["Projets", "Identité de marque", "Web & écrans", "À l'essai"];
         for (i, name) in collections.iter().enumerate() {
             self.conn
@@ -152,9 +149,26 @@ impl Db {
             for f in faces {
                 inserted += stmt
                     .execute(params![
-                        f.id, f.path, f.face_index, f.ps_name, f.family, f.style, f.full_name, f.weight,
-                        f.italic, f.mono, f.classification, f.version, f.designer, f.manufacturer, f.license,
-                        f.copyright, f.glyph_count, f.variable, f.starred, f.added_at
+                        f.id,
+                        f.path,
+                        f.face_index,
+                        f.ps_name,
+                        f.family,
+                        f.style,
+                        f.full_name,
+                        f.weight,
+                        f.italic,
+                        f.mono,
+                        f.classification,
+                        f.version,
+                        f.designer,
+                        f.manufacturer,
+                        f.license,
+                        f.copyright,
+                        f.glyph_count,
+                        f.variable,
+                        f.starred,
+                        f.added_at
                     ])
                     .map_err(err)?;
             }
@@ -176,36 +190,24 @@ impl Db {
     }
 
     pub fn path_in_use(&self, path: &str) -> R<bool> {
-        self.conn
-            .query_row("SELECT EXISTS(SELECT 1 FROM face WHERE path = ?1)", [path], |r| r.get(0))
-            .map_err(err)
+        self.conn.query_row("SELECT EXISTS(SELECT 1 FROM face WHERE path = ?1)", [path], |r| r.get(0)).map_err(err)
     }
 
     pub fn set_starred(&self, family: &str, starred: bool) -> R<()> {
-        self.conn
-            .execute("UPDATE face SET starred = ?1 WHERE family = ?2", params![starred, family])
-            .map(|_| ())
-            .map_err(err)
+        self.conn.execute("UPDATE face SET starred = ?1 WHERE family = ?2", params![starred, family]).map(|_| ()).map_err(err)
     }
 
     // ---- Collections ----
 
     pub fn collections(&self) -> R<Vec<Collection>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, name, created_at FROM collection ORDER BY name COLLATE NOCASE")
-            .map_err(err)?;
-        let rows = stmt
-            .query_map([], |r| Ok(Collection { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)? }))
-            .map_err(err)?;
+        let mut stmt = self.conn.prepare("SELECT id, name, created_at FROM collection ORDER BY name COLLATE NOCASE").map_err(err)?;
+        let rows = stmt.query_map([], |r| Ok(Collection { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)? })).map_err(err)?;
         rows.collect::<Result<_, _>>().map_err(err)
     }
 
     pub fn membership(&self) -> R<HashMap<String, Vec<String>>> {
         let mut stmt = self.conn.prepare("SELECT collection_id, face_id FROM collection_face").map_err(err)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(err)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?;
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         for row in rows {
             let (c, f) = row.map_err(err)?;
@@ -222,10 +224,7 @@ impl Db {
     }
 
     pub fn rename_collection(&self, id: &str, name: &str) -> R<()> {
-        self.conn
-            .execute("UPDATE collection SET name = ?1 WHERE id = ?2", params![name, id])
-            .map(|_| ())
-            .map_err(err)
+        self.conn.execute("UPDATE collection SET name = ?1 WHERE id = ?2", params![name, id]).map(|_| ()).map_err(err)
     }
 
     pub fn delete_collection(&self, id: &str) -> R<()> {
@@ -235,11 +234,7 @@ impl Db {
     pub fn add_to_collection(&mut self, id: &str, face_ids: &[String]) -> R<()> {
         let tx = self.conn.transaction().map_err(err)?;
         for face in face_ids {
-            tx.execute(
-                "INSERT OR IGNORE INTO collection_face (collection_id, face_id) VALUES (?1, ?2)",
-                params![id, face],
-            )
-            .map_err(err)?;
+            tx.execute("INSERT OR IGNORE INTO collection_face (collection_id, face_id) VALUES (?1, ?2)", params![id, face]).map_err(err)?;
         }
         tx.commit().map_err(err)
     }
@@ -247,11 +242,7 @@ impl Db {
     pub fn remove_from_collection(&mut self, id: &str, face_ids: &[String]) -> R<()> {
         let tx = self.conn.transaction().map_err(err)?;
         for face in face_ids {
-            tx.execute(
-                "DELETE FROM collection_face WHERE collection_id = ?1 AND face_id = ?2",
-                params![id, face],
-            )
-            .map_err(err)?;
+            tx.execute("DELETE FROM collection_face WHERE collection_id = ?1 AND face_id = ?2", params![id, face]).map_err(err)?;
         }
         tx.commit().map_err(err)
     }
@@ -259,23 +250,16 @@ impl Db {
     // ---- Tags ----
 
     pub fn tags(&self) -> R<Vec<Tag>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, name, color, rule, created_at FROM tag ORDER BY name COLLATE NOCASE")
-            .map_err(err)?;
+        let mut stmt = self.conn.prepare("SELECT id, name, color, rule, created_at FROM tag ORDER BY name COLLATE NOCASE").map_err(err)?;
         let rows = stmt
-            .query_map([], |r| {
-                Ok(Tag { id: r.get(0)?, name: r.get(1)?, color: r.get(2)?, rule: r.get(3)?, created_at: r.get(4)? })
-            })
+            .query_map([], |r| Ok(Tag { id: r.get(0)?, name: r.get(1)?, color: r.get(2)?, rule: r.get(3)?, created_at: r.get(4)? }))
             .map_err(err)?;
         rows.collect::<Result<_, _>>().map_err(err)
     }
 
     pub fn tag_membership(&self) -> R<HashMap<String, Vec<String>>> {
         let mut stmt = self.conn.prepare("SELECT tag_id, face_id FROM face_tag").map_err(err)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(err)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?;
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         for row in rows {
             let (t, f) = row.map_err(err)?;
@@ -327,9 +311,7 @@ impl Db {
 
     pub fn activation(&self) -> R<HashMap<String, Scope>> {
         let mut stmt = self.conn.prepare("SELECT path, scope FROM activation").map_err(err)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, Scope::parse(&r.get::<_, String>(1)?))))
-            .map_err(err)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, Scope::parse(&r.get::<_, String>(1)?)))).map_err(err)?;
         rows.collect::<Result<_, _>>().map_err(err)
     }
 

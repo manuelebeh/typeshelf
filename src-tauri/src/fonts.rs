@@ -11,10 +11,7 @@ pub const EXTENSIONS: &[&str] = &["ttf", "otf", "ttc", "otc"];
 const MAX_CHARACTERS: usize = 8000;
 
 pub fn is_font_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+    path.extension().and_then(|e| e.to_str()).map(|e| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str())).unwrap_or(false)
 }
 
 /// Expands files and folders into a flat list of font files.
@@ -50,13 +47,10 @@ pub fn scan(path: &Path, added_at: i64) -> Result<Vec<Face>, String> {
     let mut faces = Vec::new();
     for index in 0..count {
         let face = ttf_parser::Face::parse(&data, index).map_err(|e| e.to_string())?;
-        let family = name(&face, &[name_id::TYPOGRAPHIC_FAMILY, name_id::FAMILY])
-            .unwrap_or_else(|| file_stem(path));
-        let style = name(&face, &[name_id::TYPOGRAPHIC_SUBFAMILY, name_id::SUBFAMILY])
-            .unwrap_or_else(|| "Regular".into());
+        let family = name(&face, &[name_id::TYPOGRAPHIC_FAMILY, name_id::FAMILY]).unwrap_or_else(|| file_stem(path));
+        let style = name(&face, &[name_id::TYPOGRAPHIC_SUBFAMILY, name_id::SUBFAMILY]).unwrap_or_else(|| "Regular".into());
         let full_name = name(&face, &[name_id::FULL_NAME]).unwrap_or_else(|| format!("{family} {style}"));
-        let ps_name = name(&face, &[name_id::POST_SCRIPT_NAME])
-            .unwrap_or_else(|| format!("{family}-{style}").replace(' ', ""));
+        let ps_name = name(&face, &[name_id::POST_SCRIPT_NAME]).unwrap_or_else(|| format!("{family}-{style}").replace(' ', ""));
 
         faces.push(Face {
             id: uuid::Uuid::new_v4().to_string(),
@@ -238,9 +232,7 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
         dirs.extend(std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Microsoft\\Windows\\Fonts")));
     } else {
         dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from));
-        let data_home = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home.as_ref().map(|h| h.join(".local/share")));
+        let data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home.as_ref().map(|h| h.join(".local/share")));
         dirs.extend(data_home.map(|d| d.join("fonts")));
         dirs.extend(home.map(|h| h.join(".fonts")));
     }
@@ -265,14 +257,7 @@ pub fn is_system_path(path: &Path) -> bool {
 pub fn supports(path: &Path, index: u32, samples: &[String]) -> Result<Vec<bool>, String> {
     let data = map(path)?;
     let face = ttf_parser::Face::parse(&data, index).map_err(|e| e.to_string())?;
-    Ok(samples
-        .iter()
-        .map(|text| {
-            text.chars()
-                .filter(|c| c.is_alphanumeric())
-                .all(|c| face.glyph_index(c).is_some())
-        })
-        .collect())
+    Ok(samples.iter().map(|text| text.chars().filter(|c| c.is_alphanumeric()).all(|c| face.glyph_index(c).is_some())).collect())
 }
 
 pub fn scan_system() -> Vec<Face> {

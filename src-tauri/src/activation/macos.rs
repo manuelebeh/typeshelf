@@ -1,9 +1,9 @@
 use crate::model::Scope;
 use core_foundation::base::{CFRelease, TCFType};
-use core_foundation::string::{CFString, CFStringRef};
-use std::ffi::c_void;
 use core_foundation::error::{CFError, CFErrorRef};
+use core_foundation::string::{CFString, CFStringRef};
 use core_foundation::url::{CFURLRef, CFURL};
+use std::ffi::c_void;
 use std::path::Path;
 
 // CTFontManagerScope values.

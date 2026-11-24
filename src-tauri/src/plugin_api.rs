@@ -141,9 +141,7 @@ pub fn start(app: AppHandle) {
 
 fn serve(app: &AppHandle, server: tiny_http::Server) {
     for mut request in server.incoming_requests() {
-        let header = |name: &'static str| {
-            request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
-        };
+        let header = |name: &'static str| request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string());
         let (host, origin, client) = (header("Host"), header("Origin"), header("X-Typeshelf-Client"));
         let method = request.method().as_str().to_string();
         let url = request.url().to_string();
@@ -169,9 +167,7 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
             let _ = app.emit("plugin-activity", activity);
         }
         let content_type = tiny_http::Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap();
-        let response = tiny_http::Response::from_string(value.to_string())
-            .with_status_code(code)
-            .with_header(content_type);
+        let response = tiny_http::Response::from_string(value.to_string()).with_status_code(code).with_header(content_type);
         let _ = request.respond(response);
     }
 }
@@ -268,9 +264,8 @@ pub fn font_status(state: &AppState, names: &[String]) -> Vec<FontStatus> {
         .iter()
         .map(|name| {
             let face = library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name));
-            let active = face.is_some_and(|f| {
-                fonts::is_system_path(Path::new(&f.path)) || db.scope_of(&f.path).is_ok_and(|s| s != Scope::None)
-            });
+            let active =
+                face.is_some_and(|f| fonts::is_system_path(Path::new(&f.path)) || db.scope_of(&f.path).is_ok_and(|s| s != Scope::None));
             FontStatus { name: name.clone(), available: active || os_has(name, &system), in_library: face.is_some() }
         })
         .collect()
@@ -299,10 +294,7 @@ pub fn activate_fonts(state: &AppState, names: &[String], scope: Scope, google: 
 
     let library = lock(state).faces().unwrap_or_default();
     for name in &wanted {
-        let face = library
-            .iter()
-            .find(|f| &f.ps_name == name)
-            .or_else(|| library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name)));
+        let face = library.iter().find(|f| &f.ps_name == name).or_else(|| library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name)));
         match face {
             Some(face) if fonts::is_system_path(Path::new(&face.path)) => {
                 results.insert(name.clone(), FontResult { family: Some(face.family.clone()), ..FontResult::new(name, "system") });
@@ -370,7 +362,10 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
             Ok(p) => p,
             Err(e) => {
                 for name in names {
-                    results.insert(name.clone(), FontResult { family: Some(family.clone()), message: Some(e.clone()), ..FontResult::new(&name, "error") });
+                    results.insert(
+                        name.clone(),
+                        FontResult { family: Some(family.clone()), message: Some(e.clone()), ..FontResult::new(&name, "error") },
+                    );
                 }
                 continue;
             }

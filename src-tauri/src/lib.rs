@@ -37,9 +37,7 @@ fn lookup_face(state: &AppState, id: &str) -> Option<Face> {
 
 #[tauri::command]
 async fn system_fonts(app: AppHandle) -> CmdResult<Vec<Face>> {
-    tauri::async_runtime::spawn_blocking(move || system_faces(&app.state::<AppState>()).clone())
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || system_faces(&app.state::<AppState>()).clone()).await.map_err(|e| e.to_string())
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -124,10 +122,7 @@ fn file_name(path: &Path) -> String {
 }
 
 fn copy_into_library(root: &Path, file: &Path, family: &str) -> std::io::Result<PathBuf> {
-    let safe: String = family
-        .chars()
-        .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
-        .collect();
+    let safe: String = family.chars().map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c }).collect();
     let folder = root.join(if safe.trim().is_empty() { "Sans nom".into() } else { safe });
     fs::create_dir_all(&folder)?;
     let mut dest = folder.join(file.file_name().unwrap_or_default());
@@ -345,11 +340,7 @@ async fn google_download(app: AppHandle, family: String) -> CmdResult<GoogleDown
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let catalog = google::catalog(&google_cache(&state), false, now())?;
-        let entry = catalog
-            .families
-            .iter()
-            .find(|f| f.family == family)
-            .ok_or("Famille absente du catalogue Google Fonts")?;
+        let entry = catalog.families.iter().find(|f| f.family == family).ok_or("Famille absente du catalogue Google Fonts")?;
         let files = google::download(entry, &state.fonts_dir.join("Google Fonts"))?;
         let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
         let summary = import_blocking(&state, paths.clone(), false)?;
@@ -494,11 +485,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("typeshelf-test-{}", uuid::Uuid::new_v4()));
         let fonts_dir = root.join("Fonts");
         fs::create_dir_all(&fonts_dir).unwrap();
-        let state = AppState {
-            db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()),
-            fonts_dir,
-            system: OnceLock::new(),
-        };
+        let state = AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir, system: OnceLock::new() };
 
         let src = source.to_string_lossy().into_owned();
         let first = import_blocking(&state, vec![src.clone()], true).unwrap();
@@ -518,10 +505,7 @@ mod tests {
 
         // Activation on the real OS, using a font that is not installed system-wide.
         {
-            let face = faces
-                .iter()
-                .find(|f| f.family.to_lowercase().contains("feather"))
-                .expect("la police de test Feather est attendue");
+            let face = faces.iter().find(|f| f.family.to_lowercase().contains("feather")).expect("la police de test Feather est attendue");
             let path = face.path.clone();
             let db = lock(&state);
             for scope in [Scope::Temporary, Scope::Persistent] {

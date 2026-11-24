@@ -33,14 +33,7 @@ pub fn activate(path: &Path, scope: Scope) -> Result<(), String> {
         let key = wide(FONTS_KEY);
         let name = wide(&value_name(path));
         let status = unsafe {
-            RegSetKeyValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                name.as_ptr(),
-                REG_SZ,
-                file.as_ptr().cast(),
-                (file.len() * 2) as u32,
-            )
+            RegSetKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), REG_SZ, file.as_ptr().cast(), (file.len() * 2) as u32)
         };
         if status != ERROR_SUCCESS {
             return Err(format!("écriture du registre impossible (code {status})"));
