@@ -4,7 +4,9 @@
 //! |--------------------------|------------------------------------------------------------------------|
 //! | Photoshop (UXP)          | `Adobe/UXP/Plugins/External/<id>`, registered in `Adobe/UXP/PluginsInfo/v1/PS.json` |
 //! | Illustrator, After Effects (CEP) | `Adobe/CEP/extensions/<id>`                                    |
+//! | InDesign (CEP)           | `Adobe/CEP/extensions/dev.typeshelf.indesign`                          |
 //! | Sketch (macOS only)      | `com.bohemiancoding.sketch3/Plugins/Typeshelf.sketchplugin`            |
+//! | Figma                    | `<Typeshelf data folder>/figma-plugin`, imported once in Figma from its `manifest.json` |
 //!
 //! Adobe only loads an unsigned CEP extension in debug mode (`PlayerDebugMode`), so installing
 //! one turns it on when the bundled extension carries no signature, and removing the last one
@@ -21,6 +23,9 @@ enum Kind {
     Uxp,
     Cep,
     Sketch,
+    /// Figma has no folder to drop a plugin into: it is imported from its manifest. The copy
+    /// carries the token that lets its panel use the local API.
+    Figma,
 }
 
 struct Plugin {
@@ -38,7 +43,7 @@ struct Plugin {
     exe: &'static str,
 }
 
-const PLUGINS: [Plugin; 4] = [
+const PLUGINS: [Plugin; 6] = [
     Plugin {
         id: "photoshop",
         name: "Photoshop",
@@ -67,6 +72,15 @@ const PLUGINS: [Plugin; 4] = [
         exe: "AfterFX.exe",
     },
     Plugin {
+        id: "indesign",
+        name: "InDesign",
+        kind: Kind::Cep,
+        source: "indesign",
+        folder: "dev.typeshelf.indesign",
+        app: "Adobe InDesign",
+        exe: "InDesign.exe",
+    },
+    Plugin {
         id: "sketch",
         name: "Sketch",
         kind: Kind::Sketch,
@@ -75,6 +89,7 @@ const PLUGINS: [Plugin; 4] = [
         app: "Sketch",
         exe: "",
     },
+    Plugin { id: "figma", name: "Figma", kind: Kind::Figma, source: "figma", folder: "figma-plugin", app: "Figma", exe: "Figma.exe" },
 ];
 
 /// CSXS versions whose debug mode Typeshelf may turn on: CEP 9 (2019) to CEP 12 (2021 and later),
@@ -82,6 +97,10 @@ const PLUGINS: [Plugin; 4] = [
 const CSXS_VERSIONS: std::ops::RangeInclusive<u32> = 9..=13;
 
 const PHOTOSHOP_ID: &str = "dev.typeshelf.photoshop";
+
+/// Replaced by the token in the Figma panel (`ui.html`) when it is installed.
+const TOKEN_PLACEHOLDER: &str = "__TYPESHELF_TOKEN__";
+const FIGMA_PANEL: &str = "ui.html";
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +120,8 @@ pub struct InstallOutcome {
     pub plugin: PluginState,
     /// The application is open and only sees the change after a restart.
     pub restart: bool,
+    /// Where the plugin was copied (Figma imports it from there).
+    pub path: String,
     /// Adobe's debug mode for unsigned extensions was turned on by this install.
     pub debug_mode: bool,
 }
@@ -136,6 +157,7 @@ impl Env {
             Kind::Uxp => self.support.join("Adobe/UXP/Plugins/External").join(plugin.folder),
             Kind::Cep => self.support.join("Adobe/CEP/extensions").join(plugin.folder),
             Kind::Sketch => self.support.join("com.bohemiancoding.sketch3/Plugins").join(plugin.folder),
+            Kind::Figma => self.data_dir.join(plugin.folder),
         }
     }
 
@@ -143,8 +165,47 @@ impl Env {
         self.support.join("Adobe/UXP/PluginsInfo/v1/PS.json")
     }
 
+    fn token_path(&self) -> PathBuf {
+        self.data_dir.join(FIGMA_TOKEN_FILE)
+    }
+
     fn record_path(&self) -> PathBuf {
         self.data_dir.join("plugins.json")
+    }
+}
+
+const FIGMA_TOKEN_FILE: &str = "figma-token";
+
+/// The secret the Figma panel presents to the local API. Figma's plugin iframe has no origin, so
+/// a web page could pass for it; only a file on this computer can know the token.
+pub fn figma_token(data_dir: &Path) -> Option<String> {
+    fs::read_to_string(data_dir.join(FIGMA_TOKEN_FILE)).ok().map(|t| t.trim().to_string()).filter(|t| t.len() >= 32)
+}
+
+fn ensure_figma_token(env: &Env) -> Result<String, String> {
+    if let Some(token) = figma_token(&env.data_dir) {
+        return Ok(token);
+    }
+    let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    fs::create_dir_all(&env.data_dir).map_err(|e| e.to_string())?;
+    let path = env.token_path();
+    fs::write(&path, &token).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(token)
+}
+
+/// What a bundled file becomes once installed: only the Figma panel changes (it receives the token).
+type Render<'a> = &'a dyn Fn(&Path, Vec<u8>) -> Vec<u8>;
+
+fn renderer(plugin: &Plugin, token: Option<String>) -> impl Fn(&Path, Vec<u8>) -> Vec<u8> {
+    let figma = plugin.kind == Kind::Figma;
+    move |file: &Path, bytes: Vec<u8>| match (&token, figma && file == Path::new(FIGMA_PANEL)) {
+        (token, true) => String::from_utf8_lossy(&bytes).replace(TOKEN_PLACEHOLDER, token.as_deref().unwrap_or("")).into_bytes(),
+        _ => bytes,
     }
 }
 
@@ -166,7 +227,7 @@ fn state(env: &Env, plugin: &Plugin) -> PluginState {
     let installed = destination.exists() && (plugin.kind != Kind::Uxp || photoshop_registered(env));
     let state = if !installed {
         "absent"
-    } else if same_tree(&env.source(plugin), &destination) {
+    } else if same_tree(&env.source(plugin), &destination, &renderer(plugin, figma_token(&env.data_dir))) {
         "installed"
     } else {
         "outdated"
@@ -190,14 +251,22 @@ pub fn install(env: &Env, id: &str) -> Result<InstallOutcome, String> {
     if plugin.kind == Kind::Uxp && running {
         return Err("Quit Photoshop, then install the plugin again: Photoshop rewrites its plugin list when it quits.".into());
     }
-    copy_tree(&source, &env.destination(plugin)).map_err(|e| format!("Could not copy the {} plugin: {e}", plugin.name))?;
+    let token = if plugin.kind == Kind::Figma { Some(ensure_figma_token(env)?) } else { None };
+    let destination = env.destination(plugin);
+    copy_tree(&source, &destination, &renderer(plugin, token)).map_err(|e| format!("Could not copy the {} plugin: {e}", plugin.name))?;
     let mut debug_mode = false;
     match plugin.kind {
         Kind::Uxp => register_photoshop(env, &source)?,
         Kind::Cep if !source.join("META-INF/signatures.xml").exists() => debug_mode = enable_debug_mode(env)?,
         _ => {}
     }
-    Ok(InstallOutcome { plugin: state(env, plugin), restart: running, debug_mode })
+    Ok(InstallOutcome {
+        plugin: state(env, plugin),
+        // Figma imports the plugin from its folder: nothing has to be restarted.
+        restart: running && plugin.kind != Kind::Figma,
+        path: destination.display().to_string(),
+        debug_mode,
+    })
 }
 
 pub fn uninstall(env: &Env, id: &str) -> Result<PluginState, String> {
@@ -206,6 +275,10 @@ pub fn uninstall(env: &Env, id: &str) -> Result<PluginState, String> {
         return Err("Quit Photoshop, then remove the plugin again: Photoshop rewrites its plugin list when it quits.".into());
     }
     remove(&env.destination(plugin)).map_err(|e| format!("Could not remove the {} plugin: {e}", plugin.name))?;
+    if plugin.kind == Kind::Figma {
+        // A new install gets a new token: the old panel stops working.
+        let _ = fs::remove_file(env.token_path());
+    }
     match plugin.kind {
         Kind::Uxp => unregister_photoshop(env)?,
         Kind::Cep if !available().any(|p| p.kind == Kind::Cep && env.destination(p).exists()) => restore_debug_mode(env)?,
@@ -230,11 +303,11 @@ fn files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn same_tree(source: &Path, destination: &Path) -> bool {
+fn same_tree(source: &Path, destination: &Path, render: Render) -> bool {
     let wanted = files(source);
     !wanted.is_empty()
         && wanted == files(destination)
-        && wanted.iter().all(|f| fs::read(source.join(f)).ok() == fs::read(destination.join(f)).ok())
+        && wanted.iter().all(|f| fs::read(source.join(f)).ok().map(|bytes| render(f, bytes)) == fs::read(destination.join(f)).ok())
 }
 
 /// Removes a plugin folder, or the link that stands for it (left by a development setup).
@@ -248,7 +321,7 @@ fn remove(path: &Path) -> std::io::Result<()> {
 }
 
 /// Copies into a temporary folder first, so a failed copy never leaves half a plugin.
-fn copy_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+fn copy_tree(source: &Path, destination: &Path, render: Render) -> std::io::Result<()> {
     let parent = destination.parent().ok_or_else(|| std::io::Error::other("no parent folder"))?;
     fs::create_dir_all(parent)?;
     let staging = parent.join(format!(".{}.typeshelf-tmp", destination.file_name().unwrap_or_default().to_string_lossy()));
@@ -258,7 +331,7 @@ fn copy_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
         if let Some(dir) = target.parent() {
             fs::create_dir_all(dir)?;
         }
-        fs::copy(source.join(&file), &target)?;
+        fs::write(&target, render(&file, fs::read(source.join(&file))?))?;
     }
     remove(destination)?;
     fs::rename(&staging, destination)
@@ -475,11 +548,13 @@ fn app_found(plugin: &Plugin) -> bool {
         roots.extend(std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Applications")));
     } else if cfg!(windows) {
         roots.extend(std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("Adobe")));
+        // Figma installs per user.
+        roots.extend(std::env::var_os("LOCALAPPDATA").map(PathBuf::from));
     }
     roots.iter().filter_map(|root| fs::read_dir(root).ok()).flatten().filter_map(Result::ok).any(|entry| {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if plugin.kind == Kind::Sketch {
-            name == "Sketch.app"
+        if cfg!(target_os = "macos") && matches!(plugin.kind, Kind::Sketch | Kind::Figma) {
+            name == format!("{}.app", plugin.app)
         } else {
             name.starts_with(plugin.app)
         }
@@ -488,8 +563,8 @@ fn app_found(plugin: &Plugin) -> bool {
 
 #[cfg(target_os = "macos")]
 fn app_running(plugin: &Plugin) -> bool {
-    let pattern = if plugin.kind == Kind::Sketch {
-        "/Sketch.app/Contents/MacOS/".to_string()
+    let pattern = if matches!(plugin.kind, Kind::Sketch | Kind::Figma) {
+        format!("/{}.app/Contents/MacOS/", plugin.app)
     } else {
         format!("/{}[^/]*\\.app/Contents/MacOS/", plugin.app)
     };
@@ -559,6 +634,24 @@ mod tests {
         }
         assert!(!photoshop_registered(&env));
         assert!(install(&env, "nope").is_err());
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn figma_panel_gets_the_token_and_loses_it_on_removal() {
+        let env = temp_env();
+        let outcome = install(&env, "figma").unwrap();
+        let token = figma_token(&env.data_dir).expect("token written");
+        assert!(outcome.path.ends_with("figma-plugin"));
+        let panel = fs::read_to_string(Path::new(&outcome.path).join("ui.html")).unwrap();
+        assert!(panel.contains(&token) && !panel.contains(TOKEN_PLACEHOLDER));
+        assert!(Path::new(&outcome.path).join("manifest.json").exists());
+        // Installing again keeps the same token; the bundled panel stays a template.
+        install(&env, "figma").unwrap();
+        assert_eq!(figma_token(&env.data_dir), Some(token));
+        assert!(fs::read_to_string(env.resources.join("figma/ui.html")).unwrap().contains(TOKEN_PLACEHOLDER));
+        uninstall(&env, "figma").unwrap();
+        assert_eq!(figma_token(&env.data_dir), None, "the old panel stops working");
     }
 
     #[cfg(any(target_os = "macos", windows))]

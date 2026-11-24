@@ -108,6 +108,8 @@ export interface PluginInstallState {
 export interface PluginInstallOutcome {
   plugin: PluginInstallState;
   restart: boolean;
+  /** Where the plugin was copied (Figma imports it from there). */
+  path: string;
   debugMode: boolean;
 }
 

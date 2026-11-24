@@ -11,11 +11,14 @@ The panels follow the system language (English, or French on a French system).
 | `photoshop/`     | Photoshop 2023 (24.2) and later   | UXP (manifest v5)             |
 | `illustrator/`   | Illustrator 2021 (25) and later   | CEP + ExtendScript            |
 | `after-effects/` | After Effects 2024 (24) and later | CEP + ExtendScript            |
+| `indesign/`      | InDesign 2019 (14) and later      | CEP + ExtendScript            |
 | `sketch/`        | Sketch (tried in 2026.1)          | Sketch plugin (JavaScript)    |
-| `shared/`        | Common panel (`panel-core.js`, `panel.css`), CEP plumbing (`cep.js`) and a preview page | - |
+| `figma/`         | Figma desktop app                 | Figma plugin (sandbox + panel)|
+| `shared/`        | Common panel (`panel-core.js`, `panel.css`), CEP plumbing (`cep.js`), the Figma panel's adapter and build script, and a preview page | - |
 
 `panel-core.js` and `panel.css` (and `cep.js` for the CEP plugins) are copied into each folder, because
-every plugin must be self-contained: after changing `shared/`, run `npm run plugins:sync`.
+every plugin must be self-contained: after changing `shared/`, run `npm run plugins:sync`. It also
+rebuilds `figma/ui.html`, which inlines the panel (Figma loads one HTML file).
 `npm run dev`, then open `/plugins/shared/preview.html` to see the panel with sample data.
 
 ## Installing from Typeshelf
@@ -28,11 +31,17 @@ every plugin must be self-contained: after changing `shared/`, run `npm run plug
 | Photoshop | `Adobe/UXP/Plugins/External/dev.typeshelf.photoshop`, registered in `Adobe/UXP/PluginsInfo/v1/PS.json` |
 | Illustrator | `Adobe/CEP/extensions/dev.typeshelf.illustrator` |
 | After Effects | `Adobe/CEP/extensions/dev.typeshelf.aftereffects` |
+| InDesign | `Adobe/CEP/extensions/dev.typeshelf.indesign` |
 | Sketch | `com.bohemiancoding.sketch3/Plugins/Typeshelf.sketchplugin` |
+| Figma | `figma-plugin` in Typeshelf's data folder (macOS: `~/Library/Application Support/dev.typeshelf.app`) |
 
 - Photoshop must be closed while its plugin is installed or removed, because it rewrites `PS.json`
   when it quits. Other entries of `PS.json` are kept as they are.
-- Illustrator and After Effects only load unsigned CEP extensions in debug mode. When the bundled
+- Figma has no folder to drop a plugin into. Installing copies it, then you import it once: **Plugins ▸
+  Development ▸ Import plugin from manifest…** and choose `manifest.json` in that folder (Typeshelf
+  shows it). The copy carries a secret token (`figma-token` in the data folder, written into
+  `ui.html`); removing the plugin deletes the token, installing again makes a new one.
+- Illustrator, After Effects and InDesign only load unsigned CEP extensions in debug mode. When the bundled
   extension has no signature (`META-INF/signatures.xml`), installing it sets `PlayerDebugMode` to `1`
   for CSXS 9 to 13 where it was off, and removing the last Typeshelf extension removes the keys
   Typeshelf set (recorded in `plugins.json` in the app's data folder).
@@ -49,7 +58,7 @@ every plugin must be self-contained: after changing `shared/`, run `npm run plug
 
 To distribute it, *Package* in UXP Developer Tool produces a `.ccx` that installs with a double-click.
 
-### Illustrator and After Effects
+### Illustrator, After Effects and InDesign
 
 Unsigned CEP extensions only load in debug mode:
 
@@ -65,12 +74,16 @@ ln -s "$PWD/plugins/illustrator" ~/Library/Application\ Support/Adobe/CEP/extens
 ln -s "$PWD/plugins/after-effects" ~/Library/Application\ Support/Adobe/CEP/extensions/typeshelf-aftereffects
 ```
 
+```bash
+ln -s "$PWD/plugins/indesign" ~/Library/Application\ Support/Adobe/CEP/extensions/typeshelf-indesign
+```
+
 Restart the application: **Window ▸ Extensions ▸ Typeshelf**. The extension also loads in the
 background at startup, to check documents even when the panel is closed.
 To distribute it without debug mode, it must be signed with `ZXPSignCmd`.
 
 In debug mode, the `.debug` file opens the panel's developer tools at
-`http://localhost:8088` (Illustrator) or `http://localhost:8089` (After Effects). It is only
+`http://localhost:8088` (Illustrator), `http://localhost:8089` (After Effects) or `http://localhost:8090` (InDesign). It is only
 meant for development.
 
 ### Sketch
@@ -83,6 +96,13 @@ ln -s "$PWD/plugins/sketch/Typeshelf.sketchplugin" ~/Library/Application\ Suppor
 no permanent panel: the plugin acts on its own when a document opens and answers with a message at
 the bottom of the window. **Plugins ▸ Typeshelf** offers *Activate Missing Fonts* and *Settings…*
 (automatic activation, Google Fonts, duration).
+
+### Figma
+
+Installing from Typeshelf is the simplest way, because it writes the token the panel needs. By hand,
+run `npm run plugins:sync`, replace `__TYPESHELF_TOKEN__` in a copy of `figma/ui.html` with the
+content of `figma-token` in Typeshelf's data folder, and import that copy's `manifest.json` in Figma
+(**Plugins ▸ Development ▸ Import plugin from manifest…**). The panel is in **Plugins ▸ Development ▸ Typeshelf**.
 
 ## Local API
 
@@ -102,6 +122,11 @@ Answer: `{ "results": [{ "name", "status", "family?", "source?", "message?" }] }
 of `system` (installed on the system), `active` (already active), `activated` (activated by this
 request, `source` = `library` or `google`), `missing`, `error`. `scope` is `temporary` (until
 Typeshelf quits, the default) or `persistent`.
+
+Figma's panel uses the same three calls under `/v1/figma/…` (`status`, `fonts/status`,
+`fonts/activate`): its iframe has no origin (`Origin: null`), so these routes answer the CORS preflight
+for that origin only, and every other request must carry `X-Typeshelf-Token`, the token written into
+the installed plugin. Wrong or missing token: `401`.
 
 Safeguards: it listens on the loopback interface only (`127.0.0.1` and `[::1]`); the `Host` header
 must be `127.0.0.1:47391`, `localhost:47391` or `[::1]:47391` (against DNS rebinding); any request
@@ -137,4 +162,15 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   after opening: the plugin therefore reopens the document, only if it has no unsaved changes
   (Sketch saves when closing), at most once a minute. Otherwise it asks to reopen it. Never call
   `replaceMissingFontsIfNecessary`: it permanently replaces the missing font.
-- InDesign is not covered yet.
+- InDesign: written from the scripting reference and not tried in InDesign (it was not installed
+  where the plugin was written). `Document.fonts` lists every font of the document with a
+  `FontStatus` (installed, not available, substituted), which gives the missing ones directly. The panel
+  watches the active document every 2 s instead of relying on CEP events.
+- Figma: written from Figma's documentation and not tried in Figma. The plugin reads the fonts of the
+  current page (`getStyledTextSegments`, up to 5000 text nodes) and compares them with
+  `figma.listAvailableFontsAsync()`. Figma gives a family and a style, not a PostScript name, so the
+  panel sends `Family-Style` without spaces (`Playfair Display` + `Bold Italic` →
+  `PlayfairDisplay-BoldItalic`), which matches most fonts. Figma reads the font list when it starts:
+  after Typeshelf activates a font, restart Figma (or reload fonts) before it can use it. Network access
+  to `localhost` is only granted to plugins imported from a manifest (`devAllowedDomains`), not to
+  published ones, which is why the plugin is not on the Figma Community.

@@ -495,8 +495,27 @@ const pluginMenus: Record<string, string> = {
   photoshop: N_("Plugins ▸ Typeshelf"),
   illustrator: N_("Window ▸ Extensions ▸ Typeshelf"),
   "after-effects": N_("Window ▸ Extensions ▸ Typeshelf"),
+  indesign: N_("Window ▸ Extensions ▸ Typeshelf"),
   sketch: N_("Plugins ▸ Typeshelf"),
+  figma: N_("Plugins ▸ Development ▸ Typeshelf"),
 };
+
+/** A small badge in each host app's colours (Adobe-style monograms, the Sketch gem). */
+function pluginBadge(id: string): string {
+  const mono: Record<string, [string, string, string]> = {
+    photoshop: ["Ps", "#001e36", "#31a8ff"],
+    illustrator: ["Ai", "#330000", "#ff9a00"],
+    "after-effects": ["Ae", "#00005b", "#9999ff"],
+    indesign: ["Id", "#49021f", "#ff3366"],
+  };
+  const m = mono[id];
+  if (m) return `<span class="plugin-badge" style="background:${m[1]};color:${m[2]};border-color:${m[2]}" aria-hidden="true">${m[0]}</span>`;
+  if (id === "figma")
+    return `<span class="plugin-badge figma" aria-hidden="true"><svg viewBox="2 -2 20 28" width="16" height="22"><path d="M8 24a4 4 0 0 0 4-4v-4H8a4 4 0 0 0 0 8z" fill="#0acf83"/><path d="M4 12a4 4 0 0 1 4-4h4v8H8a4 4 0 0 1-4-4z" fill="#a259ff"/><path d="M4 4a4 4 0 0 1 4-4h4v8H8a4 4 0 0 1-4-4z" fill="#f24e1e"/><path d="M12 0h4a4 4 0 0 1 0 8h-4z" fill="#ff7262"/><path d="M20 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" fill="#1abcfe"/></svg></span>`;
+  if (id === "sketch")
+    return `<span class="plugin-badge sketch" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M7 3h10l5 6-10 12L2 9z" fill="#fdad00"/><path d="M12 21 7 9h10z" fill="#ea6c00"/><path d="M7 3 2 9h5zM17 3l5 6h-5z" fill="#fdd231"/><path d="M7 3h10l-2 6H9z" fill="#fdad00"/></svg></span>`;
+  return "";
+}
 
 async function renderPluginList() {
   const list = document.querySelector<HTMLElement>("#plugin-list");
@@ -522,6 +541,7 @@ async function renderPluginList() {
       const install = p.state === "installed" ? "" : `<button type="button" data-plugin-install="${p.id}">${esc(p.state === "outdated" ? t("Install update") : t("Install"))}</button>`;
       const remove = p.state === "absent" ? "" : `<button type="button" data-plugin-remove="${p.id}">${esc(t("Remove"))}</button>`;
       return `<div class="plugin-item">
+        ${pluginBadge(p.id)}
         <div class="plugin-text"><strong>${esc(p.name)}</strong><span class="hint"><span class="plugin-state ${p.state}">${esc(status)}</span> · ${esc(details.join(" · "))}</span></div>
         <div class="plugin-actions">${install}${remove}</div>
       </div>`;
@@ -543,11 +563,18 @@ async function installPlugin(id: string, button: HTMLButtonElement) {
     const outcome = await api.pluginInstall(id);
     const { name } = outcome.plugin;
     const parts = [t("{name} plugin installed.", { name })];
-    parts.push(
-      outcome.restart
-        ? t("Restart {name} to load it.", { name })
-        : t("Open {name}, then {menu}.", { name, menu: t(pluginMenus[id] ?? "") }),
-    );
+    if (id === "figma") {
+      // Figma has no folder to drop a plugin into: it is imported once from the manifest.
+      parts.push(t("In Figma, choose Plugins ▸ Development ▸ Import plugin from manifest…, then select manifest.json in {path}.", { path: outcome.path }));
+      const sep = outcome.path.includes("\\") ? "\\" : "/";
+      revealItemInDir(`${outcome.path}${sep}manifest.json`).catch(() => {});
+    } else {
+      parts.push(
+        outcome.restart
+          ? t("Restart {name} to load it.", { name })
+          : t("Open {name}, then {menu}.", { name, menu: t(pluginMenus[id] ?? "") }),
+      );
+    }
     if (outcome.debugMode) parts.push(t("Adobe's debug mode for unsigned extensions is now on."));
     pluginMessage(parts.join(" "));
   } catch (e) {
@@ -1993,8 +2020,54 @@ function wire() {
   );
   $("#inspector-button").addEventListener("click", () => {
     settings.inspector = !settings.inspector;
+    // The pane needs something to show: with no selection, open the first family.
+    if (settings.inspector && !state.selected) {
+      const first = visibleFamilies()[0];
+      if (first) return selectFamily(first.key);
+    }
     renderDetail();
   });
+
+  // Resizable sidebar and detail pane, remembered between launches.
+  const appEl = document.querySelector<HTMLElement>(".app")!;
+  const bounds = { sidebar: [180, 420], detail: [320, 900] } as const;
+  const setWidth = (which: "sidebar" | "detail", px: number) => {
+    const [lo, hi] = bounds[which];
+    const max = which === "detail" ? Math.min(hi, window.innerWidth - 236 - 300) : hi;
+    const w = Math.round(Math.max(lo, Math.min(max, px)));
+    appEl.style.setProperty(`--${which}-w`, `${w}px`);
+    return w;
+  };
+  for (const which of ["sidebar", "detail"] as const) {
+    const saved = Number(stored(`${which}Width`, ""));
+    if (saved) setWidth(which, saved);
+    const handle = $(`#resize-${which}`);
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add("dragging");
+      document.body.classList.add("resizing");
+      let width = 0;
+      const move = (ev: PointerEvent) => {
+        width = setWidth(which, which === "sidebar" ? ev.clientX : window.innerWidth - ev.clientX);
+      };
+      const up = () => {
+        handle.classList.remove("dragging");
+        document.body.classList.remove("resizing");
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+        if (width) store(`${which}Width`, String(width));
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("dblclick", () => {
+      appEl.style.removeProperty(`--${which}-w`);
+      store(`${which}Width`, "");
+    });
+  }
 
   const settingsDialog = $<HTMLDialogElement>("#settings-dialog");
   const showSettingsTab = (tab: string) => {

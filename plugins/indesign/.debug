@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Development only: with CEP debug mode on, the panel's DevTools are on http://localhost:8090 -->
+<ExtensionList>
+  <Extension Id="dev.typeshelf.indesign.panel">
+    <HostList>
+      <Host Name="IDSN" Port="8090" />
+    </HostList>
+  </Extension>
+</ExtensionList>

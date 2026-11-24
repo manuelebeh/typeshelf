@@ -69,7 +69,7 @@ jobs:
 
       - name: Check the plugin scripts parse
         run: |
-          for f in plugins/shared/*.js plugins/*/index.js plugins/sketch/Typeshelf.sketchplugin/Contents/Sketch/*.js; do
+          for f in plugins/shared/*.js plugins/*/index.js plugins/figma/code.js plugins/sketch/Typeshelf.sketchplugin/Contents/Sketch/*.js; do
             node --check "$f"
           done
 

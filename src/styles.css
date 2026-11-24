@@ -146,10 +146,18 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 /* ------------------------------------------------ layout */
 
 .app {
+  --sidebar-w: 236px;
+  --detail-w: 440px;
+  position: relative;
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr) auto;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) auto;
   height: 100vh;
 }
+.resizer { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 20; }
+.resizer-sidebar { left: calc(var(--sidebar-w) - 3px); }
+.resizer-detail { right: calc(var(--detail-w) - 3px); }
+#detail[hidden] + .resizer-sidebar + .resizer-detail { display: none; }
+body.resizing { cursor: col-resize; user-select: none; }
 
 /* ------------------------------------------------ sidebar */
 
@@ -365,7 +373,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 .detail-pane {
   display: flex;
   flex-direction: column;
-  width: 440px;
+  width: var(--detail-w);
   min-width: 0;
   min-height: 0;
   background: var(--panel);
@@ -533,6 +541,9 @@ dialog.settings { width: 600px; padding: 0; overflow: hidden; }
 .plugin-list { display: flex; flex-direction: column; gap: 2px; width: 100%; max-width: 380px; }
 .plugin-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 .plugin-item + .plugin-item { border-top: 1px solid var(--line); }
+.plugin-badge { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; border: 1.5px solid; font: 700 13px/1 system-ui, -apple-system, sans-serif; letter-spacing: -0.02em; }
+.plugin-badge.figma { background: #2c2c2c; border-color: transparent; }
+.plugin-badge.sketch { background: #fff7e0; border-color: transparent; }
 .plugin-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .plugin-text strong { font-weight: 500; color: var(--text); }
 .plugin-state.installed { color: var(--accent); }

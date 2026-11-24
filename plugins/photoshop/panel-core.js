@@ -1,5 +1,5 @@
 /*
- * Typeshelf panel shared by the Photoshop (UXP) and Illustrator (CEP) plugins.
+ * Typeshelf panel shared by every Typeshelf plugin (Photoshop, Illustrator, After Effects, InDesign, Figma).
  * Source of truth: plugins/shared/panel-core.js; `npm run plugins:sync` copies it
  * into each plugin folder, which must stay self-contained to be installed.
  *
@@ -52,6 +52,7 @@
     "Typeshelf is not responding": "Typeshelf ne répond pas",
     "Typeshelf is not open or does not accept plugins.": "Typeshelf n'est pas ouvert ou n'accepte pas les plugins.",
     "Error {status}": "Erreur {status}",
+    "Typeshelf does not recognise this plugin: install it again from Typeshelf.": "Typeshelf ne reconnaît pas ce plugin : réinstallez-le depuis Typeshelf.",
     "the application script failed": "script de l'application en erreur",
   };
   var french = /^fr\b/i.test((typeof navigator !== "undefined" && navigator.language) || "");

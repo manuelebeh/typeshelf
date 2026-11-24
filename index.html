@@ -54,6 +54,8 @@
       </main>
 
       <section class="detail-pane" id="detail" hidden></section>
+      <div class="resizer resizer-sidebar" id="resize-sidebar" role="separator" aria-orientation="vertical"></div>
+      <div class="resizer resizer-detail" id="resize-detail" role="separator" aria-orientation="vertical"></div>
     </div>
 
     <div id="drop-overlay" class="drop-overlay" hidden><div data-i18n>Drop your fonts to import them</div></div>
@@ -208,8 +210,8 @@
             <div class="form-field">
               <div id="plugin-list" class="plugin-list"></div>
               <p class="hint plugin-message" id="plugin-message" role="status" hidden></p>
-              <p class="hint" data-i18n>When a document opens, the panel asks Typeshelf for the missing fonts: the ones in the library are activated, the others can come from Google Fonts. Word, Pages, Keynote, Figma and most apps see active fonts without a plugin.</p>
-              <p class="hint" id="plugin-cep-hint" data-i18n>Illustrator and After Effects only load unsigned extensions in Adobe's debug mode: installing one turns it on, and removing the last one turns it back off.</p>
+              <p class="hint" data-i18n>When a document opens, the panel asks Typeshelf for the missing fonts: the ones in the library are activated, the others can come from Google Fonts. Word, Pages, Keynote and most apps see active fonts without a plugin.</p>
+              <p class="hint" id="plugin-cep-hint" data-i18n>Illustrator, After Effects and InDesign only load unsigned extensions in Adobe's debug mode: installing one turns it on, and removing the last one turns it back off.</p>
             </div>
           </div>
           <div class="form-row">

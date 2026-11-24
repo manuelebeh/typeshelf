@@ -54,7 +54,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 <type>(<scope>): <short summary in the imperative>
 ```
 
-Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `ci`, `chore`. Scopes in use: `ui`, `library`, `activation`, `google-fonts`, `plugin-api`, `photoshop`, `illustrator`, `after-effects`, `sketch`. Keep commits small and each one buildable. CI checks the messages of every pull request with commitlint.
+Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `ci`, `chore`. Scopes in use: `ui`, `library`, `activation`, `google-fonts`, `plugin-api`, `photoshop`, `illustrator`, `after-effects`, `indesign`, `sketch`, `figma`. Keep commits small and each one buildable. CI checks the messages of every pull request with commitlint.
 
 ## Code guidelines
 
@@ -68,7 +68,7 @@ Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `ci`
 
 The plugins live in `plugins/`, see [plugins/README.md](plugins/README.md) for how to install them while developing.
 
-- `plugins/shared/` is the source of truth for the panel shared by Photoshop, Illustrator and After Effects. Edit it there, then run `npm run plugins:sync` to copy it into each plugin, which must stay self-contained to be installed. Commit the copies with the change.
+- `plugins/shared/` is the source of truth for the panel shared by Photoshop, Illustrator, After Effects, InDesign and Figma. Edit it there, then run `npm run plugins:sync` to copy it into each plugin (and rebuild `plugins/figma/ui.html`), which must stay self-contained to be installed. Commit the copies with the change.
 - Try a plugin change in the real application before opening a pull request, and say which version you used.
 
 ## Safety rules
