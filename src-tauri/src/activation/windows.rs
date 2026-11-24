@@ -27,7 +27,7 @@ pub fn activate(path: &Path, scope: Scope) -> Result<(), String> {
     let file = wide_path(path);
     let added = unsafe { AddFontResourceExW(file.as_ptr(), 0, std::ptr::null()) };
     if added == 0 {
-        return Err("Windows a refusé de charger cette police".into());
+        return Err("Windows refused to load this font".into());
     }
     if scope == Scope::Persistent {
         let key = wide(FONTS_KEY);
@@ -36,7 +36,7 @@ pub fn activate(path: &Path, scope: Scope) -> Result<(), String> {
             RegSetKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), REG_SZ, file.as_ptr().cast(), (file.len() * 2) as u32)
         };
         if status != ERROR_SUCCESS {
-            return Err(format!("écriture du registre impossible (code {status})"));
+            return Err(format!("could not write to the registry (code {status})"));
         }
     }
     Ok(())

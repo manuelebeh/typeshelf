@@ -18,14 +18,58 @@
 (function (root) {
   "use strict";
 
+  // English texts are the keys; French is used when the system language is French.
+  var FR = {
+    "Installed": "Installée",
+    "Missing": "Manquante",
+    "Activated": "Activée",
+    "Not found": "Introuvable",
+    "Error": "Erreur",
+    "To check": "À vérifier",
+    "Connecting to Typeshelf…": "Connexion à Typeshelf…",
+    "Typeshelf connected": "Typeshelf connecté",
+    "Typeshelf is not open": "Typeshelf n'est pas ouvert",
+    "No document open.": "Aucun document ouvert.",
+    "This document uses no fonts.": "Ce document n'utilise aucune police.",
+    "Document": "Document",
+    "Activating…": "Activation…",
+    "Activate {n} font": "Activer {n} police",
+    "Activate {n} fonts": "Activer {n} polices",
+    "Nothing to activate": "Rien à activer",
+    "Check again": "Revérifier",
+    "Activate automatically on open": "Activer automatiquement à l'ouverture",
+    "Look for missing ones on Google Fonts": "Chercher les absentes sur Google Fonts",
+    "Duration": "Durée",
+    "Until Typeshelf quits": "Jusqu'à la fermeture de Typeshelf",
+    "Permanently": "Durablement",
+    "Could not read the document: {error}": "Lecture du document impossible : {error}",
+    "{n} font activated": "{n} police activée",
+    "{n} fonts activated": "{n} polices activées",
+    "{n} not found": "{n} introuvable",
+    "{n} not found (several)": "{n} introuvables",
+    "None of these fonts is in Typeshelf": "Aucune de ces polices n'est dans Typeshelf",
+    "None of these fonts is in Typeshelf or on Google Fonts": "Aucune de ces polices n'est dans Typeshelf ni sur Google Fonts",
+    "Typeshelf is not responding": "Typeshelf ne répond pas",
+    "Typeshelf is not open or does not accept plugins.": "Typeshelf n'est pas ouvert ou n'accepte pas les plugins.",
+    "Error {status}": "Erreur {status}",
+    "the application script failed": "script de l'application en erreur",
+  };
+  var french = /^fr\b/i.test((typeof navigator !== "undefined" && navigator.language) || "");
+
+  function t(text, vars) {
+    var out = (french && FR[text]) || text.replace(/ \(several\)$/, "");
+    for (var k in vars || {}) out = out.split("{" + k + "}").join(String(vars[k]));
+    return out;
+  }
+
   var STATUS_TEXT = {
-    installed: "Installée",
-    missing: "Manquante",
-    activated: "Activée",
+    installed: "Installed",
+    missing: "Missing",
+    activated: "Activated",
     google: "Google Fonts",
-    unavailable: "Introuvable",
-    error: "Erreur",
-    unknown: "À vérifier",
+    unavailable: "Not found",
+    error: "Error",
+    unknown: "To check",
   };
 
   function create(host, container) {
@@ -90,21 +134,21 @@
       });
       var connection =
         state.connected === null
-          ? '<span class="dot"></span>Connexion à Typeshelf…'
+          ? '<span class="dot"></span>' + t("Connecting to Typeshelf…")
           : state.connected
-            ? '<span class="dot ok"></span>Typeshelf connecté'
-            : '<span class="dot off"></span>Typeshelf n\'est pas ouvert';
+            ? '<span class="dot ok"></span>' + t("Typeshelf connected")
+            : '<span class="dot off"></span>' + t("Typeshelf is not open");
       var list = !state.doc
-        ? '<p class="muted">Aucun document ouvert.</p>'
+        ? '<p class="muted">' + t("No document open.") + "</p>"
         : !fonts.length
-          ? '<p class="muted">Ce document n\'utilise aucune police.</p>'
+          ? '<p class="muted">' + t("This document uses no fonts.") + "</p>"
           : '<ul class="fonts">' +
             fonts
               .map(function (f) {
                 var s = statusOf(f);
                 var r = state.results[f.name];
                 var title = r && r.message ? ' title="' + esc(r.message) + '"' : "";
-                return '<li><span class="name">' + esc(f.name) + '</span><span class="chip ' + s + '"' + title + ">" + STATUS_TEXT[s] + "</span></li>";
+                return '<li><span class="name">' + esc(f.name) + '</span><span class="chip ' + s + '"' + title + ">" + t(STATUS_TEXT[s]) + "</span></li>";
               })
               .join("") +
             "</ul>";
@@ -116,21 +160,21 @@
       container.innerHTML =
         '<div class="connection">' + connection + "</div>" +
         (state.connected === false && state.connectionError ? '<p class="detail">' + esc(state.connectionError) + "</p>" : "") +
-        (state.doc ? '<div class="doc"><span class="muted">Document</span> ' + esc(state.doc.name) + "</div>" : "") +
+        (state.doc ? '<div class="doc"><span class="muted">' + t("Document") + "</span> " + esc(state.doc.name) + "</div>" : "") +
         list +
         (state.message ? '<p class="message">' + esc(state.message) + "</p>" : "") +
         '<div class="actions">' +
         '<button id="ts-activate" class="primary' + (activateOff ? ' is-disabled" disabled' : '"') + ">" +
-        (state.busy ? "Activation…" : missing.length ? "Activer " + missing.length + " police" + (missing.length > 1 ? "s" : "") : "Rien à activer") +
+        (state.busy ? t("Activating…") : missing.length ? t(missing.length > 1 ? "Activate {n} fonts" : "Activate {n} font", { n: missing.length }) : t("Nothing to activate")) +
         "</button>" +
-        '<button id="ts-check"' + (state.busy ? ' class="is-disabled" disabled' : "") + ">Revérifier</button>" +
+        '<button id="ts-check"' + (state.busy ? ' class="is-disabled" disabled' : "") + ">" + t("Check again") + "</button>" +
         "</div>" +
         '<div class="options">' +
-        option("ts-auto", prefs.auto, "Activer automatiquement à l'ouverture") +
-        option("ts-google", prefs.google, "Chercher les absentes sur Google Fonts") +
-        '<div class="opt"><span>Durée</span><select id="ts-scope">' +
-        '<option value="temporary"' + (prefs.scope === "temporary" ? " selected" : "") + ">Jusqu'à la fermeture de Typeshelf</option>" +
-        '<option value="persistent"' + (prefs.scope === "persistent" ? " selected" : "") + ">Durablement</option>" +
+        option("ts-auto", prefs.auto, t("Activate automatically on open")) +
+        option("ts-google", prefs.google, t("Look for missing ones on Google Fonts")) +
+        '<div class="opt"><span>' + t("Duration") + '</span><select id="ts-scope">' +
+        '<option value="temporary"' + (prefs.scope === "temporary" ? " selected" : "") + ">" + t("Until Typeshelf quits") + "</option>" +
+        '<option value="persistent"' + (prefs.scope === "persistent" ? " selected" : "") + ">" + t("Permanently") + "</option>" +
         "</select></div>" +
         "</div>";
     }
@@ -159,7 +203,7 @@
           },
           function (e) {
             state.doc = null;
-            state.message = "Lecture du document impossible : " + e.message;
+            state.message = t("Could not read the document: {error}", { error: e.message });
           },
         ),
         ping(),
@@ -202,7 +246,7 @@
             });
           },
           function () {
-            /* stays "À vérifier" */
+            /* stays "To check" */
           },
         );
     }
@@ -225,8 +269,10 @@
             }).length;
             var left = names.length - done;
             state.message = done
-              ? done + " police" + (done > 1 ? "s" : "") + " activée" + (done > 1 ? "s" : "") + (left ? ", " + left + " introuvable" + (left > 1 ? "s" : "") : "") + "."
-              : "Aucune de ces polices n'est dans Typeshelf" + (prefs.google ? " ni sur Google Fonts" : "") + ".";
+              ? t(done > 1 ? "{n} fonts activated" : "{n} font activated", { n: done }) +
+                (left ? ", " + t(left > 1 ? "{n} not found (several)" : "{n} not found", { n: left }) : "") +
+                "."
+              : t(prefs.google ? "None of these fonts is in Typeshelf or on Google Fonts" : "None of these fonts is in Typeshelf") + ".";
           },
           function (e) {
             state.connected = false;
@@ -273,6 +319,7 @@
 
   // UXP loads this file with require(); CEP with a <script> tag. With Node.js enabled, CEP
   // pages also see a global `module`, so the window export must not depend on its absence.
+  create.t = t;
   if (typeof module !== "undefined" && module.exports) module.exports = create;
   if (root) root.TypeshelfPanel = create;
 })(typeof window !== "undefined" ? window : this);
