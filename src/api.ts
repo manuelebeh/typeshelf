@@ -97,6 +97,20 @@ export interface PluginApiStatus {
   error: string | null;
 }
 
+export interface PluginInstallState {
+  id: string;
+  name: string;
+  state: "installed" | "outdated" | "absent";
+  appFound: boolean;
+  appRunning: boolean;
+}
+
+export interface PluginInstallOutcome {
+  plugin: PluginInstallState;
+  restart: boolean;
+  debugMode: boolean;
+}
+
 export interface PluginActivity {
   client: string;
   activated: string[];
@@ -127,6 +141,9 @@ export const api = {
     invoke<{ summary: ImportSummary; paths: string[] }>("google_download", { family }),
   pluginApiStatus: () => invoke<PluginApiStatus>("plugin_api_status"),
   pluginApiConfig: (enabled: boolean, google: boolean) => invoke<PluginApiStatus>("plugin_api_config", { enabled, google }),
+  pluginsList: () => invoke<PluginInstallState[]>("plugins_list"),
+  pluginInstall: (id: string) => invoke<PluginInstallOutcome>("plugin_install", { id }),
+  pluginUninstall: (id: string) => invoke<PluginInstallState>("plugin_uninstall", { id }),
   languageSupport: (id: string, samples: string[]) => invoke<boolean[]>("language_support", { id, samples }),
 };
 
