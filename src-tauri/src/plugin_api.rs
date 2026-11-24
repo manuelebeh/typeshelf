@@ -250,9 +250,9 @@ fn family_key(ps_name: &str) -> String {
     squash(ps_name.split('-').next().unwrap_or(ps_name))
 }
 
-/// Installed according to the OS when it can tell (macOS), otherwise the scanned font folders.
+/// Installed or active according to the OS, or found in the scanned font folders.
 fn os_has(name: &str, system: &HashSet<&str>) -> bool {
-    activation::font_available(name).unwrap_or_else(|| system.contains(name))
+    system.contains(name) || activation::font_available(name) == Some(true)
 }
 
 /// Read-only: which of these fonts can already be used, and which the library holds.
