@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
+    "screenshots": "node tools/screenshots.mjs",
     "plugins:sync": "for d in photoshop illustrator after-effects; do cp plugins/shared/panel-core.js plugins/shared/panel.css plugins/$d/; done; for d in illustrator after-effects; do cp plugins/shared/cep.js plugins/$d/; done"
   },
   "dependencies": {

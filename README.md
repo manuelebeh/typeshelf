@@ -2,6 +2,15 @@
 
 A cross-platform font manager (macOS, Windows, Linux) built with Tauri 2. Everything runs locally, with no account and no telemetry.
 
+## Screenshots
+
+Typeshelf follows the light or dark appearance you pick in Settings.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/library-dark.png"><img src="docs/screenshots/library-light.png" alt="The library as a grid, with the sidebar of statuses, classifications and collections" width="49%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/details-dark.png"><img src="docs/screenshots/details-light.png" alt="The details panel of a variable family: specimen, styles, glyphs, languages, OpenType and axes" width="49%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/google-fonts-dark.png"><img src="docs/screenshots/google-fonts-light.png" alt="The Google Fonts catalog, with live previews and an Install button" width="49%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png"><img src="docs/screenshots/settings-light.png" alt="The settings dialog with appearance, language and layout options" width="49%"></picture>
+
 ## Features
 
 - **Library**: import files or folders (`.ttf`, `.otf`, `.ttc`, `.otc`) with the button or by drag and drop. Duplicates are detected by PostScript name, and fonts can optionally be copied into the library.
@@ -45,6 +54,8 @@ The end-to-end test (import, deduplication, real activation, collections, tags) 
 ```bash
 TYPESHELF_TEST_FONTS=/path/to/fonts cargo test
 ```
+
+To regenerate the screenshots from the demo data, run `npm run dev` in one terminal and `npm run screenshots` in another (it needs Google Chrome).
 
 Every interface string needs a French entry in `src/locales/fr.ts`. Check it with:
 
