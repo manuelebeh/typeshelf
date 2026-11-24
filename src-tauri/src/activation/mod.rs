@@ -29,22 +29,22 @@ pub fn activate(path: &Path, scope: Scope, previous: Scope) -> Result<(), String
         return deactivate(path, previous);
     }
     if !path.exists() {
-        return Err(format!("{} : fichier introuvable", display(path)));
+        return Err(format!("{}: file not found", display(path)));
     }
     if previous == scope {
         return Ok(());
     }
     if previous != Scope::None {
-        platform::deactivate(path, previous).map_err(|e| format!("{} : {e}", display(path)))?;
+        platform::deactivate(path, previous).map_err(|e| format!("{}: {e}", display(path)))?;
     }
-    platform::activate(path, scope).map_err(|e| format!("{} : {e}", display(path)))
+    platform::activate(path, scope).map_err(|e| format!("{}: {e}", display(path)))
 }
 
 pub fn deactivate(path: &Path, previous: Scope) -> Result<(), String> {
     if previous == Scope::None {
         return Ok(());
     }
-    platform::deactivate(path, previous).map_err(|e| format!("{} : {e}", display(path)))
+    platform::deactivate(path, previous).map_err(|e| format!("{}: {e}", display(path)))
 }
 
 /// Notifies the OS once after a batch of changes (font cache refresh, broadcast…).

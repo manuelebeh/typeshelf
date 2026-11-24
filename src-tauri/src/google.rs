@@ -56,7 +56,7 @@ fn get_text(url: &str) -> Result<String, String> {
     agent()
         .get(url)
         .call()
-        .map_err(|e| format!("Google Fonts injoignable : {e}"))?
+        .map_err(|e| format!("Google Fonts unreachable: {e}"))?
         .body_mut()
         .with_config()
         .limit(20 * 1024 * 1024)
@@ -113,7 +113,7 @@ struct RawFamily {
 pub fn parse_catalog(text: &str, now: i64) -> Result<GoogleCatalog, String> {
     // The response may start with an anti-JSON-hijacking prefix.
     let start = text.find('{').ok_or("Catalogue Google Fonts illisible")?;
-    let raw: RawCatalog = serde_json::from_str(&text[start..]).map_err(|e| format!("Catalogue Google Fonts illisible : {e}"))?;
+    let raw: RawCatalog = serde_json::from_str(&text[start..]).map_err(|e| format!("Unreadable Google Fonts catalog: {e}"))?;
     let families = raw
         .families
         .into_iter()

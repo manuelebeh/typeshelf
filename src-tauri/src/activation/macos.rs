@@ -25,7 +25,7 @@ extern "C" {
 }
 
 fn url(path: &Path) -> Result<CFURL, String> {
-    CFURL::from_path(path, false).ok_or_else(|| "chemin invalide".to_string())
+    CFURL::from_path(path, false).ok_or_else(|| "invalid path".to_string())
 }
 
 fn check(ok: u8, error: CFErrorRef) -> Result<(), String> {

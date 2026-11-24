@@ -128,13 +128,13 @@ pub fn start(app: AppHandle) {
                 let app = app.clone();
                 std::thread::spawn(move || serve(&app, server));
             }
-            Err(e) => errors.push(format!("{}:{PORT} indisponible : {e}", address.0)),
+            Err(e) => errors.push(format!("{}:{PORT} unavailable: {e}", address.0)),
         }
     }
     // IPv6 may simply be off: only report a failure when nothing listens.
     if !LISTENING.load(Ordering::Relaxed) {
         if let Ok(mut slot) = START_ERROR.lock() {
-            *slot = Some(errors.join(" ; "));
+            *slot = Some(errors.join("; "));
         }
     }
 }
@@ -185,7 +185,7 @@ fn guard(req: &Request) -> Result<(), &'static str> {
         return Err("Host not allowed");
     }
     if req.origin.is_some_and(|o| o.starts_with("http://") || o.starts_with("https://")) {
-        return Err("Les pages web ne peuvent pas utiliser cette API");
+        return Err("Web pages cannot use this API");
     }
     Ok(())
 }
@@ -206,7 +206,7 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
             }
             let body: StatusRequest = match serde_json::from_str(req.body) {
                 Ok(b) => b,
-                Err(e) => return (400, error(&format!("Corps JSON invalide : {e}")), None),
+                Err(e) => return (400, error(&format!("Invalid JSON body: {e}")), None),
             };
             if body.fonts.len() > MAX_FONTS {
                 return (400, error("Too many fonts in a single request"), None);
@@ -219,7 +219,7 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
             };
             let body: ActivateRequest = match serde_json::from_str(req.body) {
                 Ok(b) => b,
-                Err(e) => return (400, error(&format!("Corps JSON invalide : {e}")), None),
+                Err(e) => return (400, error(&format!("Invalid JSON body: {e}")), None),
             };
             if body.fonts.len() > MAX_FONTS {
                 return (400, error("Too many fonts in a single request"), None);
@@ -237,7 +237,7 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
             (200, json!({ "results": results }), activity)
         }
         ("OPTIONS", _) => (403, error("Browser requests refused"), None),
-        _ => (404, error("Route inconnue"), None),
+        _ => (404, error("Unknown route"), None),
     }
 }
 
@@ -352,7 +352,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
         }
     }
     for (family, names) in groups {
-        let entry = catalog.families.iter().find(|f| f.family == family).expect("famille du catalogue");
+        let entry = catalog.families.iter().find(|f| f.family == family).expect("family from the catalog");
         let fetched = google::download(entry, &state.fonts_dir.join("Google Fonts")).and_then(|files| {
             let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
             import_blocking(state, paths.clone(), false)?;
@@ -376,7 +376,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
         for name in names {
             let found = known.contains(name.as_str()) || known.iter().any(|k| k.eq_ignore_ascii_case(&name));
             let result = if !errors.is_empty() {
-                FontResult { family: Some(family.clone()), message: Some(errors.join(" ; ")), ..FontResult::new(&name, "error") }
+                FontResult { family: Some(family.clone()), message: Some(errors.join("; ")), ..FontResult::new(&name, "error") }
             } else if found {
                 FontResult { family: Some(family.clone()), source: Some("google"), ..FontResult::new(&name, "activated") }
             } else {
@@ -449,7 +449,7 @@ mod tests {
         let body = json!({ "fonts": [installed, "Nonexistent-Font-123"] }).to_string();
         let (code, value, activity) = route(&state, &req("POST", "/v1/fonts/status", &body));
         assert_eq!(code, 200);
-        assert!(activity.is_none(), "lecture seule");
+        assert!(activity.is_none(), "read-only");
         assert_eq!(value["results"][0]["available"], true);
         assert_eq!(value["results"][1]["available"], false);
         assert_eq!(value["results"][1]["inLibrary"], false);
