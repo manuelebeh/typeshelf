@@ -49,11 +49,7 @@ pub struct GoogleCatalog {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(60)))
-        .user_agent(USER_AGENT)
-        .build()
-        .into()
+    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(60))).user_agent(USER_AGENT).build().into()
 }
 
 fn get_text(url: &str) -> Result<String, String> {
@@ -185,11 +181,12 @@ pub fn parse_css(css: &str) -> Vec<(bool, u16, String)> {
 }
 
 fn safe_name(name: &str) -> String {
-    let s: String = name
-        .chars()
-        .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
-        .collect();
-    if s.trim().is_empty() || s.starts_with('.') { "Sans nom".into() } else { s }
+    let s: String = name.chars().map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c }).collect();
+    if s.trim().is_empty() || s.starts_with('.') {
+        "Sans nom".into()
+    } else {
+        s
+    }
 }
 
 /// Downloads every style of `family` into `root/<family>/` and returns the files written.
