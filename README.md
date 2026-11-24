@@ -20,7 +20,7 @@ Typeshelf follows the light or dark appearance you pick in Settings.
 - **Preview**: every family shown with an adjustable text and size, search, and automatic classification (sans serif, serif, slab, mono, script, display, symbols).
 - **System fonts**: every font installed on the OS (system and user folders) appears in "All fonts" and stays active. Favoriting, tagging or filing one in a collection records it in the library by reference, and the file does not move.
 - **Google Fonts**: the public catalog (about 1,900 open families) in the "Online" section, with live previews, filters by category, variable and italic, search by name or designer, and sorting by popularity. "Install" downloads every style as TrueType into the library (`Google Fonts` folder) and activates it, so it then works offline like any other font. The catalog is cached for a week, and Chinese, Japanese and Korean fonts are hidden by default (Settings › Google Fonts). No key or account is needed, and previews are loaded from Google's servers.
-- **Adobe and Sketch plugins**: a Typeshelf panel for Photoshop (UXP), Illustrator and After Effects (CEP), and a Sketch plugin, list the fonts of the document and activate the missing ones as soon as it opens (library first, then Google Fonts). They talk to a local API (127.0.0.1:47391, closed to web pages) that can be turned off in Settings › Plugins. Installation and details: [plugins/README.md](plugins/README.md).
+- **Adobe and Sketch plugins**: a Typeshelf panel for Photoshop (UXP), Illustrator and After Effects (CEP), and a Sketch plugin, list the fonts of the document and activate the missing ones as soon as it opens (library first, then Google Fonts). Settings › Plugins installs, updates and removes them in one click (macOS and Windows). They talk to a local API (127.0.0.1:47391, closed to web pages) that can be turned off in the same place. Details: [plugins/README.md](plugins/README.md).
 - **Filters and sorting**: state (active, temporary, inactive), source (system, imported), classification, variable, monospace, italic; sort by name, date added or number of styles.
 - **Grid or table**: the table shows the format and the date, and expands family by family.
 - **Details**: specimen (several sizes, on a light or colored background), styles and size cascade, glyphs by category with search (character or U+XXXX), supported languages (26, checked against the cmap table), OpenType features you can toggle, sliders for variable axes, and file information.
@@ -91,7 +91,7 @@ npm run i18n:check
 | Windows | `AddFontResourceEx` + a value in `HKCU\…\Fonts` (Windows 10 1809+) | `AddFontResourceEx` only, removed on quit |
 | Linux | link in `~/.local/share/fonts/typeshelf` + `fc-cache` | link in `…/fonts/typeshelf-temporary`, deleted on quit |
 
-The Windows and Linux modules are checked at compile time, and have not been tested on those systems yet.
+CI activates and deactivates a downloaded font for real on all three systems, temporarily and permanently. To tell whether a font a plugin asks for is already available, Typeshelf asks CoreText on macOS, fontconfig on Linux and GDI on Windows (by full name, since GDI has no PostScript names), on top of the fonts it finds in the system folders.
 
 ## Data
 

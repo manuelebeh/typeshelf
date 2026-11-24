@@ -3,7 +3,7 @@
  * is opened in a regular browser. It never ships: main.ts loads it only in dev mode
  * outside Tauri. Previews use fonts bundled with macOS.
  */
-import type { Collection, Face, FaceDetails, GoogleFamily, Library, Scope, Tag } from "../api";
+import type { Collection, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, Tag } from "../api";
 
 const SUP = "/System/Library/Fonts/Supplemental";
 let n = 0;
@@ -124,9 +124,27 @@ const googleFamilies: GoogleFamily[] = [
   gf("Noto Sans JP", "Sans Serif", weights(100, 900), 15, "2018-03-01", { subsets: ["japanese", "latin"], cjk: true }),
 ];
 
+const demoPlugins: PluginInstallState[] = [
+  { id: "photoshop", name: "Photoshop", state: "installed", appFound: true, appRunning: false },
+  { id: "illustrator", name: "Illustrator", state: "outdated", appFound: true, appRunning: true },
+  { id: "after-effects", name: "After Effects", state: "absent", appFound: true, appRunning: false },
+  { id: "sketch", name: "Sketch", state: "absent", appFound: false, appRunning: false },
+];
+
 const commands: Record<string, (a: any) => unknown> = {
   plugin_api_status: () => ({ port: 47391, enabled: true, listening: true, error: null }),
   plugin_api_config: ({ enabled }: { enabled: boolean }) => ({ port: 47391, enabled, listening: true, error: null }),
+  plugins_list: () => demoPlugins,
+  plugin_install: ({ id }: { id: string }) => {
+    const plugin = demoPlugins.find((p) => p.id === id)!;
+    plugin.state = "installed";
+    return { plugin, restart: plugin.appRunning, debugMode: id === "illustrator" || id === "after-effects" };
+  },
+  plugin_uninstall: ({ id }: { id: string }) => {
+    const plugin = demoPlugins.find((p) => p.id === id)!;
+    plugin.state = "absent";
+    return plugin;
+  },
   google_catalog: () => ({ fetchedAt: Date.now() / 1000, families: googleFamilies }),
   google_download: async ({ family }: { family: string }) => {
     await new Promise((r) => setTimeout(r, 900));

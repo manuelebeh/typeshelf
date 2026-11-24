@@ -1,9 +1,12 @@
 use crate::model::Scope;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// fontconfig scans $XDG_DATA_HOME/fonts recursively, so links placed there are
 /// picked up by every application once the cache is refreshed.
@@ -54,6 +57,9 @@ pub fn deactivate(path: &Path, _previous: Scope) -> Result<(), String> {
 pub fn finish_batch() {
     // Running applications see new fonts after fontconfig refreshes its cache.
     let _ = Command::new("fc-cache").arg("-f").arg(fonts_root()).spawn();
+    if let Ok(mut known) = KNOWN.lock() {
+        *known = None;
+    }
 }
 
 pub fn clean_temporary_leftovers() {
@@ -64,7 +70,23 @@ pub fn system_scope(_path: &Path) -> Option<Scope> {
     None
 }
 
-/// Not known on this platform: callers fall back to the scanned font folders.
-pub fn font_available(_ps_name: &str) -> Option<bool> {
-    None
+/// PostScript names fontconfig knows, kept a few seconds: a plugin asks for many names at once.
+static KNOWN: Mutex<Option<(Instant, HashSet<String>)>> = Mutex::new(None);
+
+fn fontconfig_names() -> Option<HashSet<String>> {
+    let output = Command::new("fc-list").args(["--format", "%{postscriptname}\\n"]).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+}
+
+/// Whether fontconfig, which every Linux application asks for fonts, knows this PostScript
+/// name: installed in any font folder, or activated by Typeshelf or another font manager.
+pub fn font_available(ps_name: &str) -> Option<bool> {
+    let mut known = KNOWN.lock().ok()?;
+    if known.as_ref().is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(5)) {
+        *known = Some((Instant::now(), fontconfig_names()?));
+    }
+    known.as_ref().map(|(_, names)| names.contains(ps_name))
 }

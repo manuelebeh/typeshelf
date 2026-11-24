@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type Library, type PluginActivity, type PluginApiStatus, type Scope, type Tag } from "./api";
+import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type Library, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type Tag } from "./api";
 import {
   categoryLabel,
   classOf,
@@ -20,7 +20,7 @@ import {
   type GoogleSort,
 } from "./google";
 import { hydrateIcons, icon } from "./icons";
-import { dateLocale, setLanguage, t, tn, translateStatic, type Language } from "./i18n";
+import { dateLocale, N_, setLanguage, t, tn, translateStatic, type Language } from "./i18n";
 import { matchesRule, parseRule, type Rule } from "./rules";
 import { GLYPH_GROUPS, LANGUAGES, specimen } from "./samples";
 import { editTag, TAG_COLORS, tagColor } from "./tags";
@@ -488,6 +488,87 @@ async function configurePlugins() {
   } catch {
     showPluginStatus(null);
   }
+}
+
+/** Where each plugin appears in its application. */
+const pluginMenus: Record<string, string> = {
+  photoshop: N_("Plugins ▸ Typeshelf"),
+  illustrator: N_("Window ▸ Extensions ▸ Typeshelf"),
+  "after-effects": N_("Window ▸ Extensions ▸ Typeshelf"),
+  sketch: N_("Plugins ▸ Typeshelf"),
+};
+
+async function renderPluginList() {
+  const list = document.querySelector<HTMLElement>("#plugin-list");
+  if (!list) return;
+  let plugins: PluginInstallState[];
+  try {
+    plugins = await api.pluginsList();
+  } catch (e) {
+    list.innerHTML = `<p class="hint">${esc(String(e))}</p>`;
+    return;
+  }
+  $("#plugin-cep-hint").hidden = !plugins.some((p) => p.id === "illustrator" || p.id === "after-effects");
+  if (!plugins.length) {
+    list.innerHTML = `<p class="hint">${esc(t("The plugins are for macOS and Windows."))}</p>`;
+    return;
+  }
+  list.innerHTML = plugins
+    .map((p) => {
+      const status =
+        p.state === "installed" ? t("Installed") : p.state === "outdated" ? t("Update available") : t("Not installed");
+      const details = [t(pluginMenus[p.id] ?? "")];
+      if (!p.appFound && p.state === "absent") details.push(t("{name} not found on this computer", { name: p.name }));
+      const install = p.state === "installed" ? "" : `<button type="button" data-plugin-install="${p.id}">${esc(p.state === "outdated" ? t("Install update") : t("Install"))}</button>`;
+      const remove = p.state === "absent" ? "" : `<button type="button" data-plugin-remove="${p.id}">${esc(t("Remove"))}</button>`;
+      return `<div class="plugin-item">
+        <div class="plugin-text"><strong>${esc(p.name)}</strong><span class="hint"><span class="plugin-state ${p.state}">${esc(status)}</span> · ${esc(details.join(" · "))}</span></div>
+        <div class="plugin-actions">${install}${remove}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+/** Settings is a modal dialog, above the toasts: plugin results are shown under the list. */
+function pluginMessage(text: string, error = false) {
+  const el = $("#plugin-message");
+  el.textContent = text;
+  el.classList.toggle("error", error);
+  el.hidden = !text;
+}
+
+async function installPlugin(id: string, button: HTMLButtonElement) {
+  button.disabled = true;
+  try {
+    const outcome = await api.pluginInstall(id);
+    const { name } = outcome.plugin;
+    const parts = [t("{name} plugin installed.", { name })];
+    parts.push(
+      outcome.restart
+        ? t("Restart {name} to load it.", { name })
+        : t("Open {name}, then {menu}.", { name, menu: t(pluginMenus[id] ?? "") }),
+    );
+    if (outcome.debugMode) parts.push(t("Adobe's debug mode for unsigned extensions is now on."));
+    pluginMessage(parts.join(" "));
+  } catch (e) {
+    pluginMessage(String(e), true);
+  }
+  renderPluginList();
+}
+
+async function removePlugin(id: string, button: HTMLButtonElement) {
+  button.disabled = true;
+  try {
+    const plugin = await api.pluginUninstall(id);
+    pluginMessage(
+      plugin.appRunning
+        ? t("{name} plugin removed. Restart {name} to unload it.", { name: plugin.name })
+        : t("{name} plugin removed.", { name: plugin.name }),
+    );
+  } catch (e) {
+    pluginMessage(String(e), true);
+  }
+  renderPluginList();
 }
 
 /** A plugin activated fonts for a document: refresh the library and say so. */
@@ -1934,6 +2015,8 @@ function wire() {
     $<HTMLInputElement>("#setting-plugins-google").checked = settings.pluginsGoogle;
     $<HTMLInputElement>("#setting-plugins-google").disabled = !settings.plugins;
     api.pluginApiStatus().then(showPluginStatus, () => showPluginStatus(null));
+    renderPluginList();
+    pluginMessage("");
     syncGoogleStatus();
     settingsDialog
       .querySelectorAll<HTMLElement>("[data-theme-choice]")
@@ -1985,6 +2068,11 @@ function wire() {
     settings.plugins = (e.target as HTMLInputElement).checked;
     $<HTMLInputElement>("#setting-plugins-google").disabled = !settings.plugins;
     configurePlugins();
+  });
+  $("#plugin-list").addEventListener("click", (e) => {
+    const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
+    if (button?.dataset.pluginInstall) installPlugin(button.dataset.pluginInstall, button);
+    else if (button?.dataset.pluginRemove) removePlugin(button.dataset.pluginRemove, button);
   });
   $<HTMLInputElement>("#setting-plugins-google").addEventListener("change", (e) => {
     settings.pluginsGoogle = (e.target as HTMLInputElement).checked;

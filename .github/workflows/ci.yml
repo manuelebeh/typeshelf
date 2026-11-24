@@ -94,7 +94,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev fontconfig
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -125,3 +125,8 @@ jobs:
 
       - name: Test
         run: cargo test
+
+      # Downloads a Google Fonts family, then activates and deactivates it with the system's own
+      # mechanism (CoreText, AddFontResourceEx and the registry, fontconfig).
+      - name: Activate a font for real
+        run: cargo test -- --ignored activates_a_font_for_real
