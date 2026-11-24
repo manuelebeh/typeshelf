@@ -1,56 +1,32 @@
 # Typeshelf
 
-Gestionnaire de polices multiplateforme (macOS, Windows, Linux) construit avec Tauri 2.
+A cross-platform font manager (macOS, Windows, Linux) built with Tauri 2. Everything runs locally, with no account and no telemetry.
 
-- Bibliothèque : import de fichiers ou de dossiers (`.ttf`, `.otf`, `.ttc`, `.otc`) par bouton ou
-  glisser-déposer, dédoublonnage par nom PostScript, copie optionnelle dans la bibliothèque.
-- Activation **permanente** ou **temporaire** (jusqu'à la fermeture de l'app), par famille ou par collection.
-- Aperçu de chaque famille avec un texte et une taille réglables, recherche, classement automatique
-  (sans serif, serif, slab, mono, script, display, symboles).
-- **Polices système** : toutes les polices installées sur l'OS (dossiers système et utilisateur)
-  apparaissent dans « Toutes les polices ». Elles restent toujours actives ; les mettre en favori,
-  les taguer ou les ranger dans une collection les enregistre dans la bibliothèque par simple
-  référence (le fichier ne bouge pas).
-- **Google Fonts** : le catalogue public (≈ 1 900 familles libres) dans la section « En ligne », avec
-  aperçu en direct, filtres par catégorie, variables, italique, recherche par nom ou créateur, tri par
-  popularité. « Installer » télécharge tous les styles en TrueType dans la bibliothèque (dossier
-  `Google Fonts`) et les active ; elles fonctionnent ensuite hors ligne comme n'importe quelle police.
-  Le catalogue est mis en cache une semaine ; les polices chinoises, japonaises et coréennes sont
-  masquées par défaut (Réglages → Google Fonts). Aucune clé ni compte ; les aperçus sont chargés
-  depuis les serveurs de Google.
-- **Plugins Adobe et Sketch** : un panneau Typeshelf pour Photoshop (UXP), Illustrator et After Effects (CEP), et un plugin Sketch, listent les
-  polices du document et activent celles qui manquent dès son ouverture (bibliothèque, puis Google
-  Fonts). Ils passent par une API locale (127.0.0.1:47391, fermée aux pages web), réglable dans
-  Réglages ▸ Plugins. Installation et détails : [plugins/README.md](plugins/README.md).
-- **Filtres et tri** : état (actives, temporaires, inactives), source (système, importées),
-  classification, variables, chasse fixe, italique ; tri par nom, date d'ajout ou nombre de styles.
-- **Grille ou tableau** : le tableau affiche format et date, et se déplie famille par famille.
-- **Détail** : spécimen (plusieurs corps, sur fond clair ou coloré), styles et cascade, glyphes
-  par catégorie avec recherche (caractère ou U+XXXX), langues prises en charge (26 langues,
-  vérifiées sur la table cmap), OpenType, axes variables, infos du fichier.
-- Collections et tags proposés au premier lancement (supprimables) : Projets, Identité de marque,
-  Web & écrans, À l'essai ; Titrage, Texte courant, Manuscrite, Fantaisie, et les tags intelligents
-  Variables, Chasse fixe, Script & calligraphie.
-- Favoris et collections (glisser une famille sur une collection, ou clic droit).
-- Tags de couleur : **manuels** (glisser une famille sur le tag, clic droit, ou « ＋ Tag » dans le
-  détail) et **intelligents**, qui se remplissent seuls selon des règles (famille, style, créateur,
-  fonderie, classification, graisse, nombre de glyphes, italique, chasse fixe, variable, favori,
-  active, date d'ajout), combinées par « toutes » ou « au moins une ». Activation possible de toutes
-  les polices d'un tag.
-- Détail d'une famille : styles et cascade de tailles, table des caractères, métadonnées,
-  fonctionnalités OpenType activables, curseurs pour les axes des polices variables.
+## Features
 
-## Développement
+- **Library**: import files or folders (`.ttf`, `.otf`, `.ttc`, `.otc`) with the button or by drag and drop. Duplicates are detected by PostScript name, and fonts can optionally be copied into the library.
+- **Activation**: permanent, or temporary (until the app quits), per family or per collection.
+- **Preview**: every family shown with an adjustable text and size, search, and automatic classification (sans serif, serif, slab, mono, script, display, symbols).
+- **System fonts**: every font installed on the OS (system and user folders) appears in "All fonts" and stays active. Favoriting, tagging or filing one in a collection records it in the library by reference, and the file does not move.
+- **Google Fonts**: the public catalog (about 1,900 open families) in the "Online" section, with live previews, filters by category, variable and italic, search by name or designer, and sorting by popularity. "Install" downloads every style as TrueType into the library (`Google Fonts` folder) and activates it, so it then works offline like any other font. The catalog is cached for a week, and Chinese, Japanese and Korean fonts are hidden by default (Settings › Google Fonts). No key or account is needed, and previews are loaded from Google's servers.
+- **Adobe and Sketch plugins**: a Typeshelf panel for Photoshop (UXP), Illustrator and After Effects (CEP), and a Sketch plugin, list the fonts of the document and activate the missing ones as soon as it opens (library first, then Google Fonts). They talk to a local API (127.0.0.1:47391, closed to web pages) that can be turned off in Settings › Plugins. Installation and details: [plugins/README.md](plugins/README.md).
+- **Filters and sorting**: state (active, temporary, inactive), source (system, imported), classification, variable, monospace, italic; sort by name, date added or number of styles.
+- **Grid or table**: the table shows the format and the date, and expands family by family.
+- **Details**: specimen (several sizes, on a light or colored background), styles and size cascade, glyphs by category with search (character or U+XXXX), supported languages (26, checked against the cmap table), OpenType features you can toggle, sliders for variable axes, and file information.
+- **Collections and favorites**: drag a family onto a collection, or right-click. A first launch offers collections and tags you can delete: Projects, Brand identity, Web & screens, To try, plus the smart tags Variable, Monospace and Script & calligraphy.
+- **Color tags**: manual ones (drag a family onto the tag, right-click, or "＋ Tag" in the details) and smart ones that fill themselves from rules (family, style, designer, foundry, classification, weight, glyph count, italic, monospace, variable, favorite, active, date added), combined with "all" or "at least one". All the fonts of a tag can be activated at once.
+- **Languages**: English and French. Typeshelf follows the system language, or the one chosen in Settings › General.
 
-Prérequis : Node 20+, Rust stable, et les [prérequis Tauri](https://tauri.app/start/prerequisites/) de votre OS.
+## Development
+
+Requirements: Node 20+, Rust stable, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS.
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-`npm run dev` seul ouvre l'interface dans un navigateur ordinaire avec des données de démonstration
-(`src/dev/mock.ts`, polices fournies avec macOS) ; ce mode n'est jamais inclus dans un build.
+`npm run dev` alone opens the interface in a regular browser with demo data (`src/dev/mock.ts`, fonts that ship with macOS). That mode is never included in a build.
 
 ## Build
 
@@ -64,30 +40,36 @@ npm run tauri build
 cd src-tauri && cargo test
 ```
 
-Le test de bout en bout (import, dédoublonnage, activation réelle, collections, tags) s'exécute si
-`TYPESHELF_TEST_FONTS` pointe vers un dossier contenant au moins une police variable, une
-collection `.ttc` et `Feather.ttf` (police non installée sur le système) :
+The end-to-end test (import, deduplication, real activation, collections, tags) runs when `TYPESHELF_TEST_FONTS` points to a folder holding at least one variable font, one `.ttc` collection and `Feather.ttf` (a font not installed on the system):
 
 ```bash
-TYPESHELF_TEST_FONTS=/chemin/vers/polices cargo test
+TYPESHELF_TEST_FONTS=/path/to/fonts cargo test
 ```
 
-## Activation selon l'OS
+Every interface string needs a French entry in `src/locales/fr.ts`. Check it with:
 
-| OS | Permanente | Temporaire |
+```bash
+npm run i18n:check
+```
+
+## Activation per OS
+
+| OS | Permanent | Temporary |
 |---|---|---|
-| macOS | CoreText, portée utilisateur | CoreText, portée session, retirée à la fermeture |
-| Windows | `AddFontResourceEx` + valeur dans `HKCU\…\Fonts` (Windows 10 1809+) | `AddFontResourceEx` seul, retirée à la fermeture |
-| Linux | lien dans `~/.local/share/fonts/typeshelf` + `fc-cache` | lien dans `…/fonts/typeshelf-temporary`, supprimé à la fermeture |
+| macOS | CoreText, user scope | CoreText, session scope, removed on quit |
+| Windows | `AddFontResourceEx` + a value in `HKCU\…\Fonts` (Windows 10 1809+) | `AddFontResourceEx` only, removed on quit |
+| Linux | link in `~/.local/share/fonts/typeshelf` + `fc-cache` | link in `…/fonts/typeshelf-temporary`, deleted on quit |
 
-Les modules Windows et Linux sont vérifiés à la compilation, pas encore testés sur ces systèmes.
+The Windows and Linux modules are checked at compile time, and have not been tested on those systems yet.
 
-## Données
+## Data
 
-Bibliothèque SQLite et polices copiées dans le dossier de données de l'app
-(`~/Library/Application Support/dev.typeshelf.app` sur macOS). Le catalogue Google Fonts y est
-mis en cache (`google-fonts.json`).
+The SQLite library and copied fonts live in the app's data folder (`~/Library/Application Support/dev.typeshelf.app` on macOS). The Google Fonts catalog is cached there (`google-fonts.json`).
 
-## Licence
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## License
 
 [MIT](LICENSE).
