@@ -1,5 +1,6 @@
 /** Google Fonts catalogue helpers: categories, sorting and on-demand web previews. */
 import type { GoogleFamily } from "./api";
+import { t } from "./i18n";
 
 /** Google categories mapped to Typeshelf classifications. */
 const CLASS_OF: Record<string, string> = {
@@ -10,26 +11,26 @@ const CLASS_OF: Record<string, string> = {
   Monospace: "mono",
 };
 
-export const GOOGLE_CLASSES: Record<string, string> = {
-  sans: "Sans serif",
-  serif: "Serif",
-  display: "Display",
-  script: "Manuscrite",
-  mono: "Monospace",
-};
+export const googleClassLabels = (): Record<string, string> => ({
+  sans: t("Sans serif"),
+  serif: t("Serif"),
+  display: t("Display"),
+  script: t("Handwriting"),
+  mono: t("Monospace"),
+});
 
 export const classOf = (f: GoogleFamily) => CLASS_OF[f.category] ?? "other";
-export const categoryLabel = (f: GoogleFamily) => GOOGLE_CLASSES[classOf(f)] ?? f.category;
+export const categoryLabel = (f: GoogleFamily) => googleClassLabels()[classOf(f)] ?? f.category;
 
 export type GoogleSort = "popular" | "name" | "name-desc" | "recent" | "styles";
 
-export const GOOGLE_SORTS: Record<GoogleSort, string> = {
-  popular: "Popularité",
-  name: "Nom (A → Z)",
-  "name-desc": "Nom (Z → A)",
-  recent: "Date de publication (récentes d'abord)",
-  styles: "Nombre de styles",
-};
+export const googleSortLabels = (): Record<GoogleSort, string> => ({
+  popular: t("Popularity"),
+  name: t("Name (A → Z)"),
+  "name-desc": t("Name (Z → A)"),
+  recent: t("Date published (newest first)"),
+  styles: t("Number of styles"),
+});
 
 export interface GoogleFilter {
   classes: Set<string>;

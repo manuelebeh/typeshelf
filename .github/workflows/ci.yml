@@ -58,6 +58,9 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+      - name: Check every interface string has a French translation
+        run: npm run i18n:check
+
       # Each plugin carries its own copy of the shared panel: they must match plugins/shared.
       - name: Check the plugin copies are in sync
         run: |
