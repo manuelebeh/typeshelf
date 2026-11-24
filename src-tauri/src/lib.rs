@@ -539,7 +539,7 @@ mod tests {
         // Manual and smart tags.
         {
             let mut db = lock(&state);
-            let manual = Tag { id: "t1".into(), name: "Titrage".into(), color: "red".into(), rule: None, created_at: now() };
+            let manual = Tag { id: "t1".into(), name: "Headings".into(), color: "red".into(), rule: None, created_at: now() };
             db.save_tag(&manual).unwrap();
             let ids: Vec<String> = faces.iter().take(2).map(|f| f.id.clone()).collect();
             db.set_tagged("t1", &ids, true).unwrap();
