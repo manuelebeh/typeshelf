@@ -1,0 +1,62 @@
+name: Bug report
+description: Something does not work, or a font is read, shown or activated wrongly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach font files unless their license allows you to share them.
+        For a security problem, use the private report form instead (see the link on the issue chooser).
+  - type: input
+    id: version
+    attributes:
+      label: Typeshelf version or commit
+      placeholder: 0.1.0, or the commit you built
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and version
+      placeholder: macOS 15.1, Windows 11 24H2, Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where it happens
+      multiple: true
+      options:
+        - Library, tags or filters
+        - Font activation
+        - Google Fonts
+        - Photoshop plugin
+        - Illustrator plugin
+        - After Effects plugin
+        - Sketch plugin
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Plugin application and version
+      description: Only for a plugin problem.
+      placeholder: Photoshop 2026 (27.5), Sketch 2026.1
+  - type: textarea
+    id: what
+    attributes:
+      label: What you did, what you expected, what happened
+    validations:
+      required: true
+  - type: input
+    id: font
+    attributes:
+      label: Font involved
+      description: Its PostScript name and where it comes from, if a specific font is involved.
+      placeholder: Lora-Bold, from Google Fonts
+  - type: textarea
+    id: logs
+    attributes:
+      label: Messages or logs
+      description: What the app or the plugin panel showed. Remove anything you would rather keep private.
+      render: text
