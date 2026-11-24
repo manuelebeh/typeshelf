@@ -1,0 +1,17 @@
+name: Feature request
+description: An idea for Typeshelf or one of its plugins.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Typeshelf to do?
+  - type: markdown
+    attributes:
+      value: Typeshelf has no account and no telemetry, and your fonts stay on your machine, so ideas that need any of these are unlikely to be accepted.
