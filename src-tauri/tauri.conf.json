@@ -48,6 +48,9 @@
       "../plugins/illustrator/": "plugins/illustrator/",
       "../plugins/after-effects/": "plugins/after-effects/",
       "../plugins/sketch/": "plugins/sketch/"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   }
 }

@@ -1,0 +1,148 @@
+name: Release
+
+# A tag such as v1.2.3 builds Typeshelf for macOS, Windows and Linux and leaves a draft release to review and publish
+# by hand. A tag with a suffix, such as v1.0.0-rc.1, makes a pre-release.
+# Running the workflow by hand builds the same files as downloadable artifacts and publishes nothing.
+#
+# macOS signing and notarization use these secrets of the `release` environment, on tag builds only. Without them the
+# app is signed ad hoc, and macOS asks to confirm its first launch.
+#   DEVELOPER_ID_CERT_P12      the Developer ID Application certificate and key, base64-encoded
+#   DEVELOPER_ID_CERT_PASSWORD the password of that .p12
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   for notarization (an app-specific password)
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  version:
+    name: Tag matches the version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the tag with package.json, tauri.conf.json and Cargo.toml
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          for version in \
+            "$(jq -r .version package.json)" \
+            "$(jq -r .version src-tauri/tauri.conf.json)" \
+            "$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"; do
+            if [ "$TAG" != "v$version" ]; then
+              echo "::error::Tag $TAG does not match version $version"
+              exit 1
+            fi
+          done
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: version
+    # The version check is skipped on manual runs.
+    if: always() && (needs.version.result == 'success' || needs.version.result == 'skipped')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write # creates the draft release and uploads the files
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            args: --target universal-apple-darwin
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            args: ''
+            targets: ''
+          # The oldest supported Ubuntu, so the .deb and the AppImage run on older systems too.
+          - name: Linux
+            os: ubuntu-22.04
+            args: ''
+            targets: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Tauri system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Import the signing certificate
+        if: runner.os == 'macOS' && github.ref_type == 'tag'
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          NOTARY_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$CERT_P12" ]; then
+            echo "::notice::No signing certificate configured, the app will be signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+          if [ -z "$identity" ]; then
+            echo "::error::The certificate is not a Developer ID Application certificate."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          if [ -n "$NOTARY_ID" ] && [ -n "$NOTARY_TEAM" ] && [ -n "$NOTARY_PASSWORD" ]; then
+            { echo "APPLE_ID=$NOTARY_ID"; echo "APPLE_TEAM_ID=$NOTARY_TEAM"; echo "APPLE_PASSWORD=$NOTARY_PASSWORD"; } >> "$GITHUB_ENV"
+          else
+            echo "::notice::No notarization credentials configured, the app will be signed but not notarized."
+          fi
+
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: Typeshelf ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          releaseBody: |
+            See the [README](https://github.com/manuelebeh/typeshelf#install) for the first launch on each system.
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
