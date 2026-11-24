@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- Dev preview of the plugin panel with a fake host: npm run dev, then open /plugins/shared/preview.html -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="panel.css" />
+    <style>body { background: #323232; width: 280px; }</style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="panel-core.js"></script>
+    <script>
+      const installed = new Set(["Helvetica", "ArialMT"]);
+      const doc = ["Helvetica", "ArialMT", "Lora-Bold", "Lora-Italic", "ClientBrand-Black"];
+      TypeshelfPanel(
+        {
+          name: "Aperçu",
+          call: (method, path, body) =>
+            new Promise((resolve) =>
+              setTimeout(() => {
+                if (method === "GET") return resolve({ app: "Typeshelf", api: 1 });
+                resolve({
+                  results: body.fonts.map((name) =>
+                    name.startsWith("Lora")
+                      ? (installed.add(name), { name, status: "activated", source: "google", family: "Lora" })
+                      : { name, status: "missing" },
+                  ),
+                });
+              }, 500),
+            ),
+          documentFonts: async () => ({ name: "Affiche.psd", fonts: doc.map((name) => ({ name, installed: installed.has(name) })) }),
+          onDocumentChange() {},
+        },
+        document.getElementById("app"),
+      );
+    </script>
+  </body>
+</html>

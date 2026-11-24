@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Development only: with CEP debug mode on, the panel's DevTools are on http://localhost:8089 -->
+<ExtensionList>
+  <Extension Id="dev.typeshelf.aftereffects.panel">
+    <HostList>
+      <Host Name="AEFT" Port="8089" />
+    </HostList>
+  </Extension>
+</ExtensionList>

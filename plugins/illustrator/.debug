@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Development only: with CEP debug mode on, the panel's DevTools are on http://localhost:8088 -->
+<ExtensionList>
+  <Extension Id="dev.typeshelf.illustrator.panel">
+    <HostList>
+      <Host Name="ILST" Port="8088" />
+    </HostList>
+  </Extension>
+</ExtensionList>
