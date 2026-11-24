@@ -52,7 +52,7 @@ const systemFaces: Face[] = [
   face(`${SUP}/Apple Chancery.ttf`, "Apple Chancery", "Chancery", { classification: "script" }),
 ].map((f, i) => ({ ...f, id: `sys-demo-${i}`, addedAt: 1_700_000_000 + i * 86400 }));
 
-const collections: Collection[] = ["Projets", "Identité de marque", "Web & écrans", "À l'essai"].map((name, i) => ({
+const collections: Collection[] = ["Projects", "Brand identity", "Web & screens", "To try"].map((name, i) => ({
   id: `default-col-${i}`,
   name,
   createdAt: i,
@@ -99,7 +99,7 @@ const gf = (family: string, category: string, styles: string[], popularity: numb
   category,
   styles,
   axes: [],
-  designers: ["Studio de démonstration"],
+  designers: ["Demo Studio"],
   subsets: ["latin", "latin-ext"],
   popularity,
   dateAdded,
@@ -208,7 +208,7 @@ let callbackId = 0;
   invoke: async (cmd: string, args: unknown) => {
     if (cmd.startsWith("plugin:")) return ++callbackId;
     const handler = commands[cmd];
-    if (!handler) throw new Error(`Commande inconnue en mode démo : ${cmd}`);
+    if (!handler) throw new Error(`Unknown command in demo mode: ${cmd}`);
     return structuredClone(await handler(args));
   },
 };

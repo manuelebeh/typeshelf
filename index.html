@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr" data-theme="dark">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -13,40 +13,40 @@
         <nav id="sidebar-nav" class="sidebar-nav"></nav>
         <footer class="sidebar-foot">
           <button id="settings-button" class="nav-item" type="button" data-icon="gear">
-            <span class="nav-label">Réglages</span>
+            <span class="nav-label" data-i18n>Settings</span>
           </button>
         </footer>
       </aside>
 
       <main class="list-pane">
         <header class="toolbar" data-tauri-drag-region>
-          <div class="size-control" title="Taille de l'aperçu">
+          <div class="size-control" title="Preview size" data-i18n-attr="title">
             <span class="aa">Aa</span>
-            <input id="preview-size" type="range" min="12" max="96" value="28" aria-label="Taille de l'aperçu" />
+            <input id="preview-size" type="range" min="12" max="96" value="28" aria-label="Preview size" data-i18n-attr="aria-label" />
             <span id="preview-size-label" class="mono">28</span>
           </div>
           <input
             id="preview-text"
             class="ghost-input"
             type="text"
-            placeholder="Tapez un texte d'aperçu…"
+            placeholder="Type some preview text…" data-i18n-attr="placeholder"
             spellcheck="false"
             autocomplete="off"
           />
           <label class="search-field" data-icon="search">
-            <input id="search" type="search" placeholder="Rechercher" autocomplete="off" spellcheck="false" />
+            <input id="search" type="search" placeholder="Search" data-i18n-attr="placeholder" autocomplete="off" spellcheck="false" />
           </label>
-          <button id="filter-button" class="tool badge-tool" type="button" data-icon="filter" title="Filtres" aria-label="Filtres"></button>
-          <button id="sort-button" class="tool" type="button" data-icon="sort" title="Trier" aria-label="Trier"></button>
-          <div class="tool-group" role="group" aria-label="Affichage">
-            <button class="tool" type="button" data-view="grid" data-icon="grid" title="Grille" aria-label="Grille"></button>
-            <button class="tool" type="button" data-view="rows" data-icon="rows" title="Liste" aria-label="Liste"></button>
+          <button id="filter-button" class="tool badge-tool" type="button" data-icon="filter" title="Filters" aria-label="Filters" data-i18n-attr="title,aria-label"></button>
+          <button id="sort-button" class="tool" type="button" data-icon="sort" title="Sort" aria-label="Sort" data-i18n-attr="title,aria-label"></button>
+          <div class="tool-group" role="group" aria-label="View" data-i18n-attr="aria-label">
+            <button class="tool" type="button" data-view="grid" data-icon="grid" title="Grid" aria-label="Grid" data-i18n-attr="title,aria-label"></button>
+            <button class="tool" type="button" data-view="rows" data-icon="rows" title="List" aria-label="List" data-i18n-attr="title,aria-label"></button>
           </div>
-          <button id="import-button" class="tool" type="button" data-icon="plus" title="Importer des polices" aria-label="Importer des polices"></button>
-          <button id="inspector-button" class="tool" type="button" data-icon="panel" title="Afficher le détail" aria-label="Afficher le détail"></button>
+          <button id="import-button" class="tool" type="button" data-icon="plus" title="Import fonts" aria-label="Import fonts" data-i18n-attr="title,aria-label"></button>
+          <button id="inspector-button" class="tool" type="button" data-icon="panel" title="Show the details" aria-label="Show the details" data-i18n-attr="title,aria-label"></button>
         </header>
         <div class="list-head">
-          <h1 id="list-title">Toutes les polices</h1>
+          <h1 id="list-title">All fonts</h1>
           <span id="list-subtitle"></span>
         </div>
         <div id="filter-bar" class="filter-bar" hidden></div>
@@ -56,7 +56,7 @@
       <section class="detail-pane" id="detail" hidden></section>
     </div>
 
-    <div id="drop-overlay" class="drop-overlay" hidden><div>Déposez vos polices pour les importer</div></div>
+    <div id="drop-overlay" class="drop-overlay" hidden><div data-i18n>Drop your fonts to import them</div></div>
     <div id="menu" class="menu" hidden></div>
     <div id="toast" class="toast" hidden></div>
 
@@ -65,8 +65,8 @@
         <h2 id="prompt-title"></h2>
         <input id="prompt-input" type="text" autocomplete="off" />
         <div class="dialog-actions">
-          <button type="button" data-close>Annuler</button>
-          <button value="ok" class="primary">Valider</button>
+          <button type="button" data-close data-i18n>Cancel</button>
+          <button value="ok" class="primary" data-i18n>OK</button>
         </div>
       </form>
     </dialog>
@@ -74,24 +74,24 @@
     <dialog id="tag-dialog">
       <form method="dialog">
         <h2 id="tag-title"></h2>
-        <input id="tag-name" type="text" placeholder="Nom du tag" autocomplete="off" />
+        <input id="tag-name" type="text" placeholder="Tag name" data-i18n-attr="placeholder" autocomplete="off" />
         <div id="tag-colors" class="swatches"></div>
         <div id="tag-rule" hidden>
           <p class="rule-head">
-            Inclure les familles dont un style remplit
+            <span data-i18n>Include families with a style that meets</span>
             <select id="tag-match">
-              <option value="all">toutes</option>
-              <option value="any">au moins une</option>
+              <option value="all" data-i18n>all</option>
+              <option value="any" data-i18n>at least one</option>
             </select>
-            des conditions :
+            <span data-i18n>of the conditions:</span>
           </p>
           <div id="tag-conditions"></div>
-          <button type="button" id="tag-add-condition">＋ Condition</button>
+          <button type="button" id="tag-add-condition" data-i18n>＋ Condition</button>
           <p id="tag-count" class="muted small"></p>
         </div>
         <div class="dialog-actions">
-          <button type="button" data-close>Annuler</button>
-          <button value="ok" class="primary">Enregistrer</button>
+          <button type="button" data-close data-i18n>Cancel</button>
+          <button value="ok" class="primary" data-i18n>Save</button>
         </div>
       </form>
     </dialog>
@@ -99,45 +99,55 @@
     <dialog id="settings-dialog" class="settings">
       <form method="dialog">
         <div class="settings-head">
-          <h2 id="settings-title">Général</h2>
+          <h2 id="settings-title" data-i18n>General</h2>
           <nav class="settings-tabs">
-            <button type="button" data-settings-tab="general" data-icon="gear" data-icon-size="20"><span>Général</span></button>
-            <button type="button" data-settings-tab="library" data-icon="folder" data-icon-size="20"><span>Bibliothèque</span></button>
-            <button type="button" data-settings-tab="activation" data-icon="power" data-icon-size="20"><span>Activation</span></button>
-            <button type="button" data-settings-tab="google" data-icon="globe" data-icon-size="20"><span>Google Fonts</span></button>
-            <button type="button" data-settings-tab="plugins" data-icon="plug" data-icon-size="20"><span>Plugins</span></button>
+            <button type="button" data-settings-tab="general" data-icon="gear" data-icon-size="20"><span data-i18n>General</span></button>
+            <button type="button" data-settings-tab="library" data-icon="folder" data-icon-size="20"><span data-i18n>Library</span></button>
+            <button type="button" data-settings-tab="activation" data-icon="power" data-icon-size="20"><span data-i18n>Activation</span></button>
+            <button type="button" data-settings-tab="google" data-icon="globe" data-icon-size="20"><span data-i18n>Google Fonts</span></button>
+            <button type="button" data-settings-tab="plugins" data-icon="plug" data-icon-size="20"><span data-i18n>Plugins</span></button>
           </nav>
         </div>
 
         <section class="settings-page" data-settings-page="general">
           <div class="form-row">
-            <span class="form-label">Apparence</span>
+            <span class="form-label" data-i18n>Appearance</span>
             <div class="appearance">
-              <button type="button" data-theme-choice="auto"><span class="thumb auto"></span>Système</button>
-              <button type="button" data-theme-choice="light"><span class="thumb light"></span>Clair</button>
-              <button type="button" data-theme-choice="dark"><span class="thumb dark"></span>Sombre</button>
+              <button type="button" data-theme-choice="auto"><span class="thumb auto"></span><span data-i18n>System</span></button>
+              <button type="button" data-theme-choice="light"><span class="thumb light"></span><span data-i18n>Light</span></button>
+              <button type="button" data-theme-choice="dark"><span class="thumb dark"></span><span data-i18n>Dark</span></button>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Affichage</span>
+            <span class="form-label" data-i18n>Language</span>
             <div class="form-field">
-              <label class="check"><input id="setting-inspector" type="checkbox" /> Ouvrir le détail en sélectionnant une famille</label>
+              <select id="setting-language">
+                <option value="auto" data-i18n>System</option>
+                <option value="en">English</option>
+                <option value="fr">Français</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <span class="form-label" data-i18n>Layout</span>
+            <div class="form-field">
+              <label class="check"><input id="setting-inspector" type="checkbox" /> <span data-i18n>Open the details when selecting a family</span></label>
             </div>
           </div>
         </section>
 
         <section class="settings-page" data-settings-page="library" hidden>
           <div class="form-row">
-            <span class="form-label">Import</span>
+            <span class="form-label" data-i18n>Import</span>
             <div class="form-field">
-              <label class="check"><input id="setting-copy" type="checkbox" /> Copier les polices dans la bibliothèque</label>
-              <p class="hint">Désactivé : les fichiers restent à leur emplacement d'origine et sont seulement référencés.</p>
+              <label class="check"><input id="setting-copy" type="checkbox" /> <span data-i18n>Copy fonts into the library</span></label>
+              <p class="hint" data-i18n>When off, files stay where they are and are only referenced.</p>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Dossier</span>
+            <span class="form-label" data-i18n>Folder</span>
             <div class="form-field">
-              <button type="button" id="reveal-library">Afficher dans le Finder / l'explorateur</button>
+              <button type="button" id="reveal-library" data-i18n>Show in Finder / file explorer</button>
               <p class="hint" id="library-path"></p>
             </div>
           </div>
@@ -145,72 +155,72 @@
 
         <section class="settings-page" data-settings-page="activation" hidden>
           <div class="form-row">
-            <span class="form-label">Modes</span>
+            <span class="form-label" data-i18n>Modes</span>
             <div class="form-field">
-              <p class="legend"><span class="dot persistent"></span> Active : reste disponible dans toutes les apps, même après un redémarrage.</p>
-              <p class="legend"><span class="dot temporary"></span> Temporaire : retirée à la fermeture de Typeshelf.</p>
-              <p class="legend"><span class="dot"></span> Inactive : seulement dans la bibliothèque.</p>
+              <p class="legend"><span class="dot persistent"></span> <span data-i18n>Active: stays available in every app, even after a restart.</span></p>
+              <p class="legend"><span class="dot temporary"></span> <span data-i18n>Temporary: removed when Typeshelf quits.</span></p>
+              <p class="legend"><span class="dot"></span> <span data-i18n>Inactive: only in the library.</span></p>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Bibliothèque</span>
+            <span class="form-label" data-i18n>Library</span>
             <div class="form-field">
-              <button type="button" id="deactivate-all" class="danger">Tout désactiver</button>
+              <button type="button" id="deactivate-all" class="danger" data-i18n>Deactivate everything</button>
             </div>
           </div>
         </section>
 
         <section class="settings-page" data-settings-page="google" hidden>
           <div class="form-row">
-            <span class="form-label">Catalogue</span>
+            <span class="form-label" data-i18n>Catalog</span>
             <div class="form-field">
-              <label class="check"><input id="setting-google" type="checkbox" /> Afficher Google Fonts dans la barre latérale</label>
-              <label class="check"><input id="setting-google-cjk" type="checkbox" /> Inclure les polices chinoises, japonaises et coréennes</label>
-              <p class="hint">Souvent très volumineuses (plusieurs Mo par style) : masquées par défaut.</p>
+              <label class="check"><input id="setting-google" type="checkbox" /> <span data-i18n>Show Google Fonts in the sidebar</span></label>
+              <label class="check"><input id="setting-google-cjk" type="checkbox" /> <span data-i18n>Include Chinese, Japanese and Korean fonts</span></label>
+              <p class="hint" data-i18n>Often very large (several MB per style): hidden by default.</p>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Mise à jour</span>
+            <span class="form-label" data-i18n>Update</span>
             <div class="form-field">
-              <button type="button" id="google-refresh">Mettre à jour le catalogue</button>
+              <button type="button" id="google-refresh" data-i18n>Update the catalog</button>
               <p class="hint" id="google-status"></p>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Confidentialité</span>
+            <span class="form-label" data-i18n>Privacy</span>
             <div class="form-field">
-              <p class="hint">Le catalogue (une fois par semaine au plus) et les aperçus sont chargés depuis les serveurs de Google, sans compte ni clé. Une famille téléchargée est rangée dans la bibliothèque, dossier « Google Fonts ».</p>
+              <p class="hint" data-i18n>The catalog (at most once a week) and the previews are loaded from Google's servers, with no account or key. A downloaded family is stored in the library, in the “Google Fonts” folder.</p>
             </div>
           </div>
         </section>
 
         <section class="settings-page" data-settings-page="plugins" hidden>
           <div class="form-row">
-            <span class="form-label">Connexion</span>
+            <span class="form-label" data-i18n>Connection</span>
             <div class="form-field">
-              <label class="check"><input id="setting-plugins" type="checkbox" /> Autoriser les plugins à activer des polices</label>
-              <label class="check"><input id="setting-plugins-google" type="checkbox" /> Récupérer sur Google Fonts les polices manquantes</label>
+              <label class="check"><input id="setting-plugins" type="checkbox" /> <span data-i18n>Allow plugins to activate fonts</span></label>
+              <label class="check"><input id="setting-plugins-google" type="checkbox" /> <span data-i18n>Fetch missing fonts from Google Fonts</span></label>
               <p class="hint" id="plugins-status"></p>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Applications</span>
+            <span class="form-label" data-i18n>Applications</span>
             <div class="form-field">
-              <p class="legend"><strong>Photoshop</strong> : panneau Typeshelf (Plugins ▸ Typeshelf).</p>
-              <p class="legend"><strong>Illustrator</strong> et <strong>After Effects</strong> : panneau Typeshelf (Fenêtre ▸ Extensions ▸ Typeshelf).</p>
-              <p class="legend"><strong>Sketch</strong> : plugin qui agit à l'ouverture d'un document (Plugins ▸ Typeshelf).</p>
-              <p class="hint">À l'ouverture d'un document, le panneau demande à Typeshelf les polices qui manquent : celles de la bibliothèque sont activées, les autres peuvent venir de Google Fonts. Word, Pages, Keynote, Figma et la plupart des apps voient les polices actives sans plugin.</p>
+              <p class="legend" data-i18n-html><strong>Photoshop</strong>: Typeshelf panel (Plugins ▸ Typeshelf).</p>
+              <p class="legend" data-i18n-html><strong>Illustrator</strong> and <strong>After Effects</strong>: Typeshelf panel (Window ▸ Extensions ▸ Typeshelf).</p>
+              <p class="legend" data-i18n-html><strong>Sketch</strong>: plugin that acts when a document opens (Plugins ▸ Typeshelf).</p>
+              <p class="hint" data-i18n>When a document opens, the panel asks Typeshelf for the missing fonts: the ones in the library are activated, the others can come from Google Fonts. Word, Pages, Keynote, Figma and most apps see active fonts without a plugin.</p>
             </div>
           </div>
           <div class="form-row">
-            <span class="form-label">Sécurité</span>
+            <span class="form-label" data-i18n>Security</span>
             <div class="form-field">
-              <p class="hint">Les plugins parlent à Typeshelf sur cet ordinateur uniquement (127.0.0.1). Les pages web ne peuvent pas utiliser cette connexion.</p>
+              <p class="hint" data-i18n>Plugins talk to Typeshelf on this computer only (127.0.0.1). Web pages cannot use this connection.</p>
             </div>
           </div>
         </section>
 
-        <div class="dialog-actions"><button value="ok" class="primary">Terminé</button></div>
+        <div class="dialog-actions"><button value="ok" class="primary" data-i18n>Done</button></div>
       </form>
     </dialog>
 
