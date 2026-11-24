@@ -1,0 +1,55 @@
+/* Typeshelf panel, shared by the Photoshop, Illustrator and After Effects plugins (copied by `npm run plugins:sync`). */
+:root {
+  --ts-text: #e8e8ea;
+  --ts-muted: #9a9aa2;
+  --ts-line: rgba(255, 255, 255, 0.1);
+  --ts-field: rgba(255, 255, 255, 0.06);
+  --ts-accent: #2f80ed;
+  --ts-green: #34c759;
+  --ts-orange: #ff9f0a;
+  --ts-red: #ff5a4f;
+}
+body.light {
+  --ts-text: #1f1f22;
+  --ts-muted: #6b6b73;
+  --ts-line: rgba(0, 0, 0, 0.12);
+  --ts-field: rgba(0, 0, 0, 0.05);
+}
+body {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--ts-text);
+}
+.muted { color: var(--ts-muted); }
+.connection { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ts-muted); display: inline-block; }
+.dot.ok { background: var(--ts-green); }
+.dot.off { background: var(--ts-red); }
+.doc { margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fonts { list-style: none; margin: 0 0 8px; padding: 0; border-top: 1px solid var(--ts-line); }
+.fonts li { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--ts-line); }
+.fonts .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 9px; background: var(--ts-field); color: var(--ts-muted); }
+.chip.missing { color: var(--ts-orange); }
+.chip.activated, .chip.google { color: var(--ts-green); }
+.chip.unavailable, .chip.error { color: var(--ts-red); }
+.chip.unknown { font-style: italic; }
+.message { margin: 6px 0; color: var(--ts-muted); }
+.actions { display: flex; gap: 6px; margin: 8px 0 12px; }
+.actions button {
+  font: inherit;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--ts-line);
+  background: var(--ts-field);
+  color: var(--ts-text);
+  cursor: pointer;
+}
+.actions button.primary { background: var(--ts-accent); border-color: transparent; color: #fff; }
+.actions button.is-disabled { opacity: 0.45; cursor: default; }
+.detail { margin: -4px 0 8px; color: var(--ts-muted); font-size: 11px; }
+.options { display: flex; flex-direction: column; gap: 6px; }
+.opt { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+.options select { font: inherit; color: inherit; background: var(--ts-field); border: 1px solid var(--ts-line); border-radius: 5px; padding: 2px 4px; }

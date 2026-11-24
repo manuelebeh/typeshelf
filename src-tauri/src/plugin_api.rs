@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const PORT: u16 = 47391;
@@ -24,6 +24,13 @@ static ENABLED: AtomicBool = AtomicBool::new(true);
 static ALLOW_GOOGLE: AtomicBool = AtomicBool::new(true);
 static LISTENING: AtomicBool = AtomicBool::new(false);
 static START_ERROR: Mutex<Option<String>> = Mutex::new(None);
+/// Where `figma-token` lives (Typeshelf's data folder), set once at start.
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Routes for Figma's plugin panel. Its iframe has no origin ("null"), which the usual routes
+/// refuse to answer through CORS; these ones do, but only for a request that carries the token
+/// Typeshelf wrote into the installed plugin.
+const FIGMA_PREFIX: &str = "/v1/figma/";
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +120,8 @@ pub struct Request<'a> {
     pub host: Option<&'a str>,
     pub origin: Option<&'a str>,
     pub client: Option<&'a str>,
+    /// `X-Typeshelf-Token`, required by the `/v1/figma/…` routes only.
+    pub token: Option<&'a str>,
     pub body: &'a str,
 }
 
@@ -120,6 +129,9 @@ pub struct Request<'a> {
 /// `localhost` (Photoshop only grants network access by host name), which may resolve to
 /// either. A port already in use is reported in the settings.
 pub fn start(app: AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        let _ = DATA_DIR.set(dir);
+    }
     let mut errors = Vec::new();
     for address in [("127.0.0.1", PORT), ("::1", PORT)] {
         match tiny_http::Server::http(address) {
@@ -143,6 +155,7 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
     for mut request in server.incoming_requests() {
         let header = |name: &'static str| request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string());
         let (host, origin, client) = (header("Host"), header("Origin"), header("X-Typeshelf-Client"));
+        let token = header("X-Typeshelf-Token");
         let method = request.method().as_str().to_string();
         let url = request.url().to_string();
         let mut body = String::new();
@@ -159,6 +172,7 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
                     host: host.as_deref(),
                     origin: origin.as_deref(),
                     client: client.as_deref(),
+                    token: token.as_deref(),
                     body: &body,
                 },
             )
@@ -167,9 +181,27 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
             let _ = app.emit("plugin-activity", activity);
         }
         let content_type = tiny_http::Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap();
-        let response = tiny_http::Response::from_string(value.to_string()).with_status_code(code).with_header(content_type);
+        let mut response = tiny_http::Response::from_string(if code == 204 { String::new() } else { value.to_string() })
+            .with_status_code(code)
+            .with_header(content_type);
+        if url.starts_with(FIGMA_PREFIX) && origin.as_deref() == Some("null") {
+            for (name, value) in cors_headers(&method) {
+                response.add_header(tiny_http::Header::from_bytes(name, value).unwrap());
+            }
+        }
         let _ = request.respond(response);
     }
+}
+
+/// CORS answer for Figma's panel: any origin, because the token is what authenticates it.
+fn cors_headers(method: &str) -> Vec<(&'static str, &'static str)> {
+    let mut headers = vec![("Access-Control-Allow-Origin", "*")];
+    if method == "OPTIONS" {
+        headers.push(("Access-Control-Allow-Methods", "GET, POST, OPTIONS"));
+        headers.push(("Access-Control-Allow-Headers", "Content-Type, X-Typeshelf-Client, X-Typeshelf-Token"));
+        headers.push(("Access-Control-Max-Age", "600"));
+    }
+    headers
 }
 
 fn error(message: &str) -> Value {
@@ -198,6 +230,9 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
         return (403, error(e), None);
     }
     let path = req.url.split('?').next().unwrap_or("");
+    if let Some(rest) = path.strip_prefix(FIGMA_PREFIX) {
+        return route_figma(state, req, rest);
+    }
     match (req.method, path) {
         ("GET", "/v1/status") => (200, json!({ "app": "Typeshelf", "version": env!("CARGO_PKG_VERSION"), "api": 1 }), None),
         ("POST", "/v1/fonts/status") => {
@@ -239,6 +274,31 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
         ("OPTIONS", _) => (403, error("Browser requests refused"), None),
         _ => (404, error("Unknown route"), None),
     }
+}
+
+/// The token Typeshelf gave the installed Figma plugin, compared without stopping at the first difference.
+fn token_ok(given: Option<&str>) -> bool {
+    let Some(expected) = DATA_DIR.get().and_then(|dir| crate::plugin_install::figma_token(dir)) else {
+        return false;
+    };
+    let given = given.unwrap_or("");
+    given.len() == expected.len() && given.bytes().zip(expected.bytes()).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0
+}
+
+/// `/v1/figma/status`, `/v1/figma/fonts/status` and `/v1/figma/fonts/activate`: the usual routes,
+/// reached from Figma's null-origin panel with the token. A preflight carries no token (browsers
+/// never send custom headers on it), so it is answered for the null origin only; the request that
+/// follows is what is authenticated.
+fn route_figma(state: &AppState, req: &Request, rest: &str) -> (u16, Value, Option<Activity>) {
+    let null_origin = req.origin == Some("null");
+    if req.method == "OPTIONS" {
+        return if null_origin { (204, Value::Null, None) } else { (403, error("Browser requests refused"), None) };
+    }
+    if !token_ok(req.token) {
+        return (401, error("Missing or wrong token: install the Figma plugin again from Typeshelf"), None);
+    }
+    let url = format!("/v1/{rest}");
+    route(state, &Request { url: &url, ..*req })
 }
 
 /// "PlayfairDisplay-BoldItalic" → "playfairdisplay": compared with catalogue names without spaces.
@@ -405,7 +465,54 @@ mod tests {
     }
 
     fn req<'a>(method: &'a str, url: &'a str, body: &'a str) -> Request<'a> {
-        Request { method, url, host: Some("127.0.0.1:47391"), origin: None, client: Some("Test"), body }
+        Request { method, url, host: Some("127.0.0.1:47391"), origin: None, client: Some("Test"), token: None, body }
+    }
+
+    const FIGMA_TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// Points the API at a data folder holding a Figma token (once for the whole test run).
+    fn with_figma_token() {
+        DATA_DIR.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("typeshelf-figma-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("figma-token"), FIGMA_TOKEN).unwrap();
+            dir
+        });
+    }
+
+    fn figma<'a>(method: &'a str, url: &'a str, body: &'a str) -> Request<'a> {
+        Request { origin: Some("null"), token: Some(FIGMA_TOKEN), client: Some("Figma"), ..req(method, url, body) }
+    }
+
+    #[test]
+    fn figma_needs_its_token_and_a_null_origin_preflight() {
+        with_figma_token();
+        let state = temp_state();
+        // The preflight has no token: it is answered for the null origin only.
+        assert_eq!(route(&state, &Request { token: None, ..figma("OPTIONS", "/v1/figma/fonts/status", "") }).0, 204);
+        assert_eq!(
+            route(&state, &Request { origin: Some("https://evil.example"), ..figma("OPTIONS", "/v1/figma/fonts/status", "") }).0,
+            403
+        );
+        assert_eq!(route(&state, &Request { origin: None, ..figma("OPTIONS", "/v1/figma/fonts/status", "") }).0, 403);
+        // The request itself is authenticated by the token.
+        assert_eq!(route(&state, &figma("GET", "/v1/figma/status", "")).0, 200);
+        assert_eq!(route(&state, &Request { token: None, ..figma("GET", "/v1/figma/status", "") }).0, 401);
+        assert_eq!(route(&state, &Request { token: Some("wrong"), ..figma("GET", "/v1/figma/status", "") }).0, 401);
+        assert_eq!(route(&state, &Request { token: Some(&FIGMA_TOKEN[1..]), ..figma("GET", "/v1/figma/status", "") }).0, 401);
+        // A web page cannot pass for Figma, token or not; nor can another host name.
+        assert_eq!(route(&state, &Request { origin: Some("https://evil.example"), ..figma("GET", "/v1/figma/status", "") }).0, 403);
+        assert_eq!(route(&state, &Request { host: Some("evil.example:47391"), ..figma("GET", "/v1/figma/status", "") }).0, 403);
+        // The usual routes still refuse OPTIONS, with or without a token.
+        assert_eq!(route(&state, &figma("OPTIONS", "/v1/fonts/activate", "")).0, 403);
+        // Fonts go through the same handlers as the other plugins.
+        let body = json!({ "fonts": ["Nonexistent-Font-123"], "google": false }).to_string();
+        let (code, value, activity) = route(&state, &figma("POST", "/v1/figma/fonts/activate", &body));
+        assert_eq!(code, 200);
+        assert_eq!(value["results"][0]["status"], "missing");
+        assert_eq!(activity.unwrap().client, "Figma");
+        assert_eq!(route(&state, &figma("POST", "/v1/figma/fonts/status", &body)).0, 200);
+        assert_eq!(route(&state, &figma("GET", "/v1/figma/nope", "")).0, 404);
     }
 
     #[test]

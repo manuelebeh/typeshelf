@@ -1,0 +1,14 @@
+{
+  "name": "Typeshelf",
+  "id": "dev.typeshelf.figma",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "devAllowedDomains": ["http://localhost:47391", "http://127.0.0.1:47391"],
+    "reasoning": "Typeshelf runs on this computer and activates the fonts the file needs. The panel only talks to it on this machine."
+  }
+}

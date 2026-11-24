@@ -47,6 +47,8 @@
       "../plugins/photoshop/": "plugins/photoshop/",
       "../plugins/illustrator/": "plugins/illustrator/",
       "../plugins/after-effects/": "plugins/after-effects/",
+      "../plugins/indesign/": "plugins/indesign/",
+      "../plugins/figma/": "plugins/figma/",
       "../plugins/sketch/": "plugins/sketch/"
     },
     "macOS": {
