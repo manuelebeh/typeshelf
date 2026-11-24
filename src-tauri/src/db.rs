@@ -291,7 +291,7 @@ impl Db {
         let is_smart: bool = self
             .conn
             .query_row("SELECT rule IS NOT NULL FROM tag WHERE id = ?1", [id], |r| r.get(0))
-            .map_err(|_| "Tag introuvable".to_string())?;
+            .map_err(|_| "Tag not found".to_string())?;
         if is_smart {
             return Err("Un tag intelligent se remplit automatiquement".into());
         }

@@ -156,7 +156,7 @@ fn remove_families(state: State<AppState>, families: Vec<String>) -> CmdResult<V
     for path in &paths {
         if Path::new(path).starts_with(&state.fonts_dir) && !db.path_in_use(path)? {
             if let Err(e) = trash::delete(path) {
-                errors.push(format!("{} : {e}", file_name(Path::new(path))));
+                errors.push(format!("{}: {e}", file_name(Path::new(path))));
             }
         }
     }
@@ -266,7 +266,7 @@ fn validate_tag(name: &str, color: &str, rule: &Option<String>) -> CmdResult<()>
         return Err("The name cannot be empty".into());
     }
     if !TAG_COLORS.contains(&color) {
-        return Err(format!("Couleur inconnue : {color}"));
+        return Err(format!("Unknown color: {color}"));
     }
     if let Some(rule) = rule {
         serde_json::from_str::<serde_json::Value>(rule).map_err(|e| format!("Invalid rule: {e}"))?;
@@ -286,7 +286,7 @@ fn create_tag(state: State<AppState>, name: String, color: String, rule: Option<
 fn update_tag(state: State<AppState>, id: String, name: String, color: String, rule: Option<String>) -> CmdResult<()> {
     validate_tag(&name, &color, &rule)?;
     let db = lock(&state);
-    let existing = db.tags()?.into_iter().find(|t| t.id == id).ok_or("Tag introuvable")?;
+    let existing = db.tags()?.into_iter().find(|t| t.id == id).ok_or("Tag not found")?;
     db.save_tag(&Tag { id, name: name.trim().into(), color, rule, created_at: existing.created_at })
 }
 
@@ -307,7 +307,7 @@ fn set_tagged(state: State<AppState>, id: String, families: Vec<String>, tagged:
 #[tauri::command]
 async fn face_details(app: AppHandle, id: String) -> CmdResult<FaceDetails> {
     tauri::async_runtime::spawn_blocking(move || {
-        let face = lookup_face(&app.state::<AppState>(), &id).ok_or("Style introuvable")?;
+        let face = lookup_face(&app.state::<AppState>(), &id).ok_or("Style not found")?;
         fonts::details(Path::new(&face.path), face.face_index)
     })
     .await
@@ -340,7 +340,7 @@ async fn google_download(app: AppHandle, family: String) -> CmdResult<GoogleDown
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let catalog = google::catalog(&google_cache(&state), false, now())?;
-        let entry = catalog.families.iter().find(|f| f.family == family).ok_or("Famille absente du catalogue Google Fonts")?;
+        let entry = catalog.families.iter().find(|f| f.family == family).ok_or("Family not in the Google Fonts catalog")?;
         let files = google::download(entry, &state.fonts_dir.join("Google Fonts"))?;
         let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
         let summary = import_blocking(&state, paths.clone(), false)?;
@@ -353,7 +353,7 @@ async fn google_download(app: AppHandle, family: String) -> CmdResult<GoogleDown
 #[tauri::command]
 async fn language_support(app: AppHandle, id: String, samples: Vec<String>) -> CmdResult<Vec<bool>> {
     tauri::async_runtime::spawn_blocking(move || {
-        let face = lookup_face(&app.state::<AppState>(), &id).ok_or("Style introuvable")?;
+        let face = lookup_face(&app.state::<AppState>(), &id).ok_or("Style not found")?;
         fonts::supports(Path::new(&face.path), face.face_index, &samples)
     })
     .await
@@ -505,7 +505,7 @@ mod tests {
 
         // Activation on the real OS, using a font that is not installed system-wide.
         {
-            let face = faces.iter().find(|f| f.family.to_lowercase().contains("feather")).expect("la police de test Feather est attendue");
+            let face = faces.iter().find(|f| f.family.to_lowercase().contains("feather")).expect("the Feather test font is expected");
             let path = face.path.clone();
             let db = lock(&state);
             for scope in [Scope::Temporary, Scope::Persistent] {
