@@ -87,3 +87,7 @@ Les modules Windows et Linux sont vérifiés à la compilation, pas encore test�
 Bibliothèque SQLite et polices copiées dans le dossier de données de l'app
 (`~/Library/Application Support/dev.typeshelf.app` sur macOS). Le catalogue Google Fonts y est
 mis en cache (`google-fonts.json`).
+
+## Licence
+
+[MIT](LICENSE).

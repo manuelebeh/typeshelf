@@ -2,6 +2,8 @@
 name = "typeshelf"
 version = "0.1.0"
 description = "Gestionnaire de polices multiplateforme"
+license = "MIT"
+repository = "https://github.com/manuelebeh/typeshelf"
 edition = "2021"
 
 [lib]
