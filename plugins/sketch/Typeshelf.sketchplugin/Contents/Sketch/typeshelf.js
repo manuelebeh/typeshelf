@@ -3,7 +3,7 @@
  *
  * When a document opens (OpenDocument action), lists the fonts of its text layers and asks
  * Typeshelf, running on this computer, to activate the ones Sketch lacks: from the library, or
- * downloaded from Google Fonts. Plugins ▸ Typeshelf ▸ Activer les polices manquantes does the
+ * downloaded from Google Fonts. Plugins ▸ Typeshelf ▸ Activate Missing Fonts does the
  * same on demand.
  *
  * Sketch keeps the PostScript name of a missing font in the text, so names are read from each
@@ -23,8 +23,38 @@ function pref(key) {
   return typeof value === "boolean" ? value : DEFAULTS[key];
 }
 
-function plural(count, word) {
-  return count + " " + word + (count > 1 ? "s" : "");
+// English texts are the keys; French is used when the system language is French.
+var FR = {
+  "Typeshelf is not open or does not accept plugins ({error})": "Typeshelf n'est pas ouvert ou n'accepte pas les plugins ({error})",
+  "Error {status}": "Erreur {status}",
+  "No document open.": "Aucun document ouvert.",
+  "All the fonts of the document are available.": "Toutes les polices du document sont disponibles.",
+  "This document uses no fonts.": "Ce document n'utilise aucune police.",
+  "Activating {n} font…": "Activation de {n} police…",
+  "Activating {n} fonts…": "Activation de {n} polices…",
+  "{n} font activated.": "{n} police activée.",
+  "{n} fonts activated.": "{n} polices activées.",
+  "no font activated.": "aucune police activée.",
+  "Not found: {names}": "Introuvable : {names}",
+  "Reopen the document to see them.": "Rouvrez le document pour les voir.",
+  "Activate automatically when a document opens": "Activer automatiquement à l'ouverture d'un document",
+  "Look for missing ones on Google Fonts": "Chercher les absentes sur Google Fonts",
+  "Keep them active after Typeshelf quits": "Les garder actives après la fermeture de Typeshelf",
+  "Typeshelf must be open to activate fonts.": "Typeshelf doit être ouvert pour activer les polices.",
+  "Cancel": "Annuler",
+};
+var french = /^fr/i.test(String(NSLocale.preferredLanguages().firstObject() || ""));
+
+function t(text, vars) {
+  var out = (french && FR[text]) || text;
+  Object.keys(vars || {}).forEach(function (key) {
+    out = out.split("{" + key + "}").join(String(vars[key]));
+  });
+  return out;
+}
+
+function say(text) {
+  UI.message("Typeshelf: " + text);
 }
 
 /**
@@ -87,7 +117,7 @@ function request(method, path, body, done) {
     var failure = null;
     try {
       if (error) {
-        failure = "Typeshelf n'est pas ouvert ou n'accepte pas les plugins (" + error.localizedDescription() + ")";
+        failure = t("Typeshelf is not open or does not accept plugins ({error})", { error: error.localizedDescription() });
       } else {
         try {
           value = JSON.parse(String(NSString.alloc().initWithData_encoding(data, NSUTF8StringEncoding)));
@@ -95,11 +125,11 @@ function request(method, path, body, done) {
           /* empty body */
         }
         var status = Number(response.statusCode());
-        if (status < 200 || status >= 300) failure = value.error || "Erreur " + status;
+        if (status < 200 || status >= 300) failure = value.error || t("Error {status}", { status: status });
       }
       done(failure, value);
     } catch (e) {
-      UI.message("Typeshelf : " + e);
+      say(String(e));
     } finally {
       session.finishTasksAndInvalidate();
       fiber.cleanup();
@@ -110,7 +140,7 @@ function request(method, path, body, done) {
 
 function check(document, manual) {
   if (!document) {
-    if (manual) UI.message("Typeshelf : aucun document ouvert.");
+    if (manual) say(t("No document open."));
     return;
   }
   var names = documentFonts(document);
@@ -118,14 +148,14 @@ function check(document, manual) {
     return !usable(name);
   });
   if (!missing.length) {
-    if (manual) UI.message(names.length ? "Typeshelf : toutes les polices du document sont disponibles." : "Typeshelf : ce document n'utilise aucune police.");
+    if (manual) say(names.length ? t("All the fonts of the document are available.") : t("This document uses no fonts."));
     return;
   }
-  UI.message("Typeshelf : activation de " + plural(missing.length, "police") + "…");
+  say(t(missing.length > 1 ? "Activating {n} fonts…" : "Activating {n} font…", { n: missing.length }));
   var body = { fonts: missing, scope: pref("persistent") ? "persistent" : "temporary", google: pref("google") };
   request("POST", "/v1/fonts/activate", body, function (error, res) {
     if (error) {
-      UI.message("Typeshelf : " + error);
+      say(error);
       return;
     }
     var activated = (res.results || [])
@@ -138,11 +168,11 @@ function check(document, manual) {
     var left = missing.filter(function (name) {
       return activated.indexOf(name) < 0;
     });
-    var text = activated.length ? plural(activated.length, "police") + " activée" + (activated.length > 1 ? "s" : "") + "." : "aucune police activée.";
-    if (left.length) text += " Introuvable" + (left.length > 1 ? "s" : "") + " : " + left.join(", ");
+    var text = activated.length ? t(activated.length > 1 ? "{n} fonts activated." : "{n} font activated.", { n: activated.length }) : t("no font activated.");
+    if (left.length) text += " " + t("Not found: {names}", { names: left.join(", ") });
     var ready = activated.filter(usable).length > 0;
-    if (ready && !reopen(document, "Typeshelf : " + text)) text += " Rouvrez le document pour les voir.";
-    UI.message("Typeshelf : " + text);
+    if (ready && !reopen(document, "Typeshelf: " + text)) text += " " + t("Reopen the document to see them.");
+    say(text);
   });
 }
 
@@ -181,9 +211,9 @@ function onActivate() {
 
 function onSettings() {
   var options = [
-    ["auto", "Activer automatiquement à l'ouverture d'un document"],
-    ["google", "Chercher les absentes sur Google Fonts"],
-    ["persistent", "Les garder actives après la fermeture de Typeshelf"],
+    ["auto", t("Activate automatically when a document opens")],
+    ["google", t("Look for missing ones on Google Fonts")],
+    ["persistent", t("Keep them active after Typeshelf quits")],
   ];
   var view = NSView.alloc().initWithFrame(NSMakeRect(0, 0, 380, options.length * 24));
   var boxes = options.map(function (option, index) {
@@ -195,9 +225,9 @@ function onSettings() {
   });
   var alert = NSAlert.alloc().init();
   alert.setMessageText("Typeshelf");
-  alert.setInformativeText("Typeshelf doit être ouvert pour activer les polices.");
+  alert.setInformativeText(t("Typeshelf must be open to activate fonts."));
   alert.addButtonWithTitle("OK");
-  alert.addButtonWithTitle("Annuler");
+  alert.addButtonWithTitle(t("Cancel"));
   alert.setAccessoryView(view);
   if (alert.runModal() !== NSAlertFirstButtonReturn) return;
   options.forEach(function (option, index) {

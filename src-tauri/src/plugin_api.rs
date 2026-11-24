@@ -148,7 +148,7 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
         let mut body = String::new();
         let read = request.as_reader().take(MAX_BODY + 1).read_to_string(&mut body);
         let (code, value, activity) = if read.is_err() || body.len() as u64 > MAX_BODY {
-            (413, error("Requête trop volumineuse"), None)
+            (413, error("Request too large"), None)
         } else {
             let state = app.state::<AppState>();
             route(
@@ -182,7 +182,7 @@ fn guard(req: &Request) -> Result<(), &'static str> {
         .host
         .is_some_and(|h| [format!("127.0.0.1:{PORT}"), format!("localhost:{PORT}"), format!("[::1]:{PORT}")].iter().any(|ok| ok == h));
     if !own_host {
-        return Err("Hôte non autorisé");
+        return Err("Host not allowed");
     }
     if req.origin.is_some_and(|o| o.starts_with("http://") || o.starts_with("https://")) {
         return Err("Les pages web ne peuvent pas utiliser cette API");
@@ -192,7 +192,7 @@ fn guard(req: &Request) -> Result<(), &'static str> {
 
 pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) {
     if !ENABLED.load(Ordering::Relaxed) {
-        return (503, error("API des plugins désactivée dans les réglages de Typeshelf"), None);
+        return (503, error("Plugin API turned off in the Typeshelf settings"), None);
     }
     if let Err(e) = guard(req) {
         return (403, error(e), None);
@@ -202,27 +202,27 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
         ("GET", "/v1/status") => (200, json!({ "app": "Typeshelf", "version": env!("CARGO_PKG_VERSION"), "api": 1 }), None),
         ("POST", "/v1/fonts/status") => {
             if req.client.is_none_or(|c| c.trim().is_empty()) {
-                return (403, error("En-tête X-Typeshelf-Client manquant"), None);
+                return (403, error("Missing X-Typeshelf-Client header"), None);
             }
             let body: StatusRequest = match serde_json::from_str(req.body) {
                 Ok(b) => b,
                 Err(e) => return (400, error(&format!("Corps JSON invalide : {e}")), None),
             };
             if body.fonts.len() > MAX_FONTS {
-                return (400, error("Trop de polices dans une seule requête"), None);
+                return (400, error("Too many fonts in a single request"), None);
             }
             (200, json!({ "results": font_status(state, &body.fonts) }), None)
         }
         ("POST", "/v1/fonts/activate") => {
             let Some(client) = req.client.filter(|c| !c.trim().is_empty()) else {
-                return (403, error("En-tête X-Typeshelf-Client manquant"), None);
+                return (403, error("Missing X-Typeshelf-Client header"), None);
             };
             let body: ActivateRequest = match serde_json::from_str(req.body) {
                 Ok(b) => b,
                 Err(e) => return (400, error(&format!("Corps JSON invalide : {e}")), None),
             };
             if body.fonts.len() > MAX_FONTS {
-                return (400, error("Trop de polices dans une seule requête"), None);
+                return (400, error("Too many fonts in a single request"), None);
             }
             let scope = if body.scope.as_deref() == Some("persistent") { Scope::Persistent } else { Scope::Temporary };
             let google = body.google && ALLOW_GOOGLE.load(Ordering::Relaxed);
@@ -236,7 +236,7 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
             });
             (200, json!({ "results": results }), activity)
         }
-        ("OPTIONS", _) => (403, error("Requêtes de navigateur refusées"), None),
+        ("OPTIONS", _) => (403, error("Browser requests refused"), None),
         _ => (404, error("Route inconnue"), None),
     }
 }
@@ -382,7 +382,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
             } else {
                 FontResult {
                     family: Some(family.clone()),
-                    message: Some(format!("{family} a été téléchargée et activée, mais ce style n'y figure pas")),
+                    message: Some(format!("{family} was downloaded and activated, but it has no such style")),
                     ..FontResult::new(&name, "missing")
                 }
             };
@@ -434,7 +434,7 @@ mod tests {
         let (code, value, activity) = route(&state, &req("POST", "/v1/fonts/activate", &body));
         assert_eq!(code, 200);
         let results = value["results"].as_array().unwrap();
-        assert_eq!(results.len(), 1 + usize::from(installed.is_some()), "doublons retirés");
+        assert_eq!(results.len(), 1 + usize::from(installed.is_some()), "duplicates removed");
         assert_eq!(results[0]["status"], "missing");
         if installed.is_some() {
             assert_eq!(results[1]["status"], "system");
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn status_tells_installed_from_unknown_fonts() {
         let state = temp_state();
-        let installed = system_faces(&state).first().map(|f| f.ps_name.clone()).expect("au moins une police système");
+        let installed = system_faces(&state).first().map(|f| f.ps_name.clone()).expect("at least one system font");
         let body = json!({ "fonts": [installed, "Nonexistent-Font-123"] }).to_string();
         let (code, value, activity) = route(&state, &req("POST", "/v1/fonts/status", &body));
         assert_eq!(code, 200);

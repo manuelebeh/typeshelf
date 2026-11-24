@@ -80,7 +80,7 @@ impl Db {
             return Ok(());
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        let collections = ["Projets", "Identité de marque", "Web & écrans", "À l'essai"];
+        let collections = ["Projects", "Brand identity", "Web & screens", "To try"];
         for (i, name) in collections.iter().enumerate() {
             self.conn
                 .execute(

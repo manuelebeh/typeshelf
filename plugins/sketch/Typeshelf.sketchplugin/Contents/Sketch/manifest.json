@@ -1,6 +1,6 @@
 {
   "name": "Typeshelf",
-  "description": "Active dans Typeshelf les polices qui manquent aux documents ouverts.",
+  "description": "Activates in Typeshelf the fonts that open documents are missing.",
   "author": "Typeshelf",
   "identifier": "dev.typeshelf.sketch",
   "version": "0.1.0",
@@ -8,7 +8,7 @@
   "disableCocoaScriptPreprocessor": true,
   "commands": [
     {
-      "name": "Activer les polices manquantes",
+      "name": "Activate Missing Fonts",
       "identifier": "activate",
       "script": "typeshelf.js",
       "handlers": {
@@ -17,7 +17,7 @@
       }
     },
     {
-      "name": "Réglages…",
+      "name": "Settings…",
       "identifier": "settings",
       "script": "typeshelf.js",
       "handler": "onSettings"
