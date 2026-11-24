@@ -66,7 +66,56 @@ fn display(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// Whether the OS can already render a font with this PostScript name, when it can tell.
+/// Whether the OS can already render a font with this PostScript name, when it can tell:
+/// CoreText on macOS, fontconfig on Linux, GDI full names on Windows.
 pub fn font_available(ps_name: &str) -> Option<bool> {
     platform::font_available(ps_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// The OS can take a moment to notice a change (fontconfig rescans, GDI broadcasts).
+    fn becomes(expected: bool, ps_name: &str) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(30) {
+            if font_available(ps_name) == Some(expected) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        false
+    }
+
+    /// Downloads a family the CI machines do not have, then activates and deactivates it for
+    /// real, temporarily and permanently. CI runs it on macOS, Windows and Linux with
+    /// `cargo test -- --ignored activates_a_font_for_real`.
+    #[test]
+    #[ignore = "downloads from Google Fonts and changes the fonts of this session"]
+    fn activates_a_font_for_real() {
+        let dir = std::env::temp_dir().join(format!("typeshelf-activation-{}", uuid::Uuid::new_v4()));
+        let catalog = crate::google::catalog(&dir.join("cache.json"), true, 0).unwrap();
+        let family = catalog.families.iter().find(|f| f.family == "Lora").expect("Lora in the catalog");
+        let files = crate::google::download(family, &dir.join("fonts")).unwrap();
+        let file = files.iter().find(|f| !f.to_string_lossy().contains("Italic")).unwrap_or(&files[0]);
+        let face = crate::fonts::scan(file, 0).unwrap().remove(0);
+        let ps_name = face.ps_name.as_str();
+        assert_eq!(font_available(ps_name), Some(false), "{ps_name} must not be installed already");
+
+        for scope in [Scope::Temporary, Scope::Persistent] {
+            activate(file, scope, Scope::None).unwrap();
+            finish_batch();
+            assert!(becomes(true, ps_name), "{ps_name} active ({scope:?})");
+            if let Some(reported) = system_scope(file) {
+                assert_eq!(reported, scope);
+            }
+            activate(file, Scope::None, scope).unwrap();
+            finish_batch();
+            assert!(becomes(false, ps_name), "{ps_name} inactive again ({scope:?})");
+        }
+        clean_temporary_leftovers();
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -1,8 +1,15 @@
 use crate::model::Scope;
+use std::collections::HashSet;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-use windows_sys::Win32::Graphics::Gdi::{AddFontResourceExW, RemoveFontResourceExW};
+use windows_sys::Win32::Foundation::LPARAM;
+use windows_sys::Win32::Graphics::Gdi::{
+    AddFontResourceExW, EnumFontFamiliesExW, GetDC, ReleaseDC, RemoveFontResourceExW, DEFAULT_CHARSET, ENUMLOGFONTEXW, LOGFONTW,
+    TEXTMETRICW,
+};
 use windows_sys::Win32::System::Registry::{RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
 use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_FONTCHANGE};
 
@@ -59,6 +66,9 @@ pub fn deactivate(path: &Path, previous: Scope) -> Result<(), String> {
 }
 
 pub fn finish_batch() {
+    if let Ok(mut known) = KNOWN.lock() {
+        *known = None;
+    }
     unsafe {
         SendMessageTimeoutW(HWND_BROADCAST, WM_FONTCHANGE, 0, 0, SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut());
     }
@@ -71,7 +81,67 @@ pub fn system_scope(_path: &Path) -> Option<Scope> {
     None
 }
 
-/// Not known on this platform: callers fall back to the scanned font folders.
-pub fn font_available(_ps_name: &str) -> Option<bool> {
-    None
+/// Full names of the fonts GDI can use, without spaces or punctuation, kept a few seconds:
+/// a plugin asks for many names at once.
+static KNOWN: Mutex<Option<(Instant, HashSet<String>)>> = Mutex::new(None);
+
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
+}
+
+fn utf16(chars: &[u16]) -> String {
+    let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
+    String::from_utf16_lossy(&chars[..end])
+}
+
+unsafe extern "system" fn collect(font: *const LOGFONTW, _metrics: *const TEXTMETRICW, _kind: u32, found: LPARAM) -> i32 {
+    // GDI passes an ENUMLOGFONTEXW, which starts with the LOGFONTW.
+    let font = &*(font as *const ENUMLOGFONTEXW);
+    let found = &mut *(found as *mut Vec<(String, String)>);
+    found.push((utf16(&font.elfLogFont.lfFaceName), utf16(&font.elfFullName)));
+    1
+}
+
+/// Every style of every family GDI knows: installed, or loaded with AddFontResource by
+/// Typeshelf or another font manager.
+fn gdi_full_names() -> Option<HashSet<String>> {
+    unsafe {
+        let dc = GetDC(std::ptr::null_mut());
+        if dc.is_null() {
+            return None;
+        }
+        let enumerate = |face: &str| {
+            let mut wanted: LOGFONTW = std::mem::zeroed();
+            wanted.lfCharSet = DEFAULT_CHARSET;
+            for (slot, c) in wanted.lfFaceName.iter_mut().zip(face.encode_utf16().take(31)) {
+                *slot = c;
+            }
+            let mut found: Vec<(String, String)> = Vec::new();
+            EnumFontFamiliesExW(dc, &wanted, Some(collect), &mut found as *mut _ as LPARAM, 0);
+            found
+        };
+        // An empty name lists one entry per family; a family name lists its styles.
+        let families: HashSet<String> = enumerate("").into_iter().map(|(family, _)| family).filter(|f| !f.starts_with('@')).collect();
+        let mut names = HashSet::new();
+        for family in families {
+            for (_, full) in enumerate(&family) {
+                names.insert(squash(&full));
+            }
+        }
+        ReleaseDC(std::ptr::null_mut(), dc);
+        Some(names)
+    }
+}
+
+/// Whether a font with this PostScript name can be used right now. GDI has no PostScript
+/// names, but they are almost always the full name without spaces ("Lora-Bold" and "Lora Bold").
+/// Callers also check the PostScript names of the scanned font folders.
+pub fn font_available(ps_name: &str) -> Option<bool> {
+    let mut known = KNOWN.lock().ok()?;
+    if known.as_ref().is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(5)) {
+        *known = Some((Instant::now(), gdi_full_names()?));
+    }
+    let wanted = squash(ps_name);
+    let regular = wanted.strip_suffix("regular").unwrap_or(&wanted).to_string();
+    known.as_ref().map(|(_, names)| names.contains(&wanted) || names.contains(&regular))
 }

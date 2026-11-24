@@ -71,7 +71,7 @@ npm run i18n:check
 | Windows | `AddFontResourceEx` + a value in `HKCU\…\Fonts` (Windows 10 1809+) | `AddFontResourceEx` only, removed on quit |
 | Linux | link in `~/.local/share/fonts/typeshelf` + `fc-cache` | link in `…/fonts/typeshelf-temporary`, deleted on quit |
 
-The Windows and Linux modules are checked at compile time, and have not been tested on those systems yet.
+CI activates and deactivates a downloaded font for real on all three systems, temporarily and permanently. To tell whether a font a plugin asks for is already available, Typeshelf asks CoreText on macOS, fontconfig on Linux and GDI on Windows (by full name, since GDI has no PostScript names), on top of the fonts it finds in the system folders.
 
 ## Data
 
