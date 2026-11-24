@@ -1,5 +1,7 @@
 # Typeshelf
 
+[![CI](https://github.com/manuelebeh/typeshelf/actions/workflows/ci.yml/badge.svg)](https://github.com/manuelebeh/typeshelf/actions/workflows/ci.yml)
+
 A cross-platform font manager (macOS, Windows, Linux) built with Tauri 2. Everything runs locally, with no account and no telemetry.
 
 ## Screenshots
@@ -26,6 +28,22 @@ Typeshelf follows the light or dark appearance you pick in Settings.
 - **Color tags**: manual ones (drag a family onto the tag, right-click, or "＋ Tag" in the details) and smart ones that fill themselves from rules (family, style, designer, foundry, classification, weight, glyph count, italic, monospace, variable, favorite, active, date added), combined with "all" or "at least one". All the fonts of a tag can be activated at once.
 - **Languages**: English and French. Typeshelf follows the system language, or the one chosen in Settings › General.
 
+## Install
+
+Download the file for your system from the [latest release](https://github.com/manuelebeh/typeshelf/releases/latest):
+
+| System | File |
+|---|---|
+| macOS 10.15 or later (Apple silicon and Intel) | `.dmg` |
+| Windows 10 or later | `.msi` or `-setup.exe` |
+| Linux | `.deb`, `.rpm` or `.AppImage` |
+
+The builds are not signed yet, so each system asks to confirm the first launch:
+
+- **macOS**: open Typeshelf once, then **System Settings › Privacy & Security › Open Anyway**. Or, after moving it to Applications: `xattr -dr com.apple.quarantine /Applications/Typeshelf.app`.
+- **Windows**: in the SmartScreen dialog, **More info › Run anyway**.
+- **Linux**: make the AppImage executable (`chmod +x`), or install the `.deb` or `.rpm` package.
+
 ## Development
 
 Requirements: Node 20+, Rust stable, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS.
@@ -42,6 +60,8 @@ npm run tauri dev
 ```bash
 npm run tauri build
 ```
+
+A tag such as `v0.1.0` builds every system on GitHub Actions and leaves a draft release (`.github/workflows/release.yml`). The tag must match the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
 
 ## Tests
 
