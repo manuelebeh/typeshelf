@@ -13,6 +13,8 @@ pub struct Face {
     pub style: String,
     pub full_name: String,
     pub weight: u16,
+    /// OS/2 usWidthClass, 1 (ultra-condensed) to 9 (ultra-expanded).
+    pub width: u16,
     pub italic: bool,
     pub mono: bool,
     pub classification: String,
@@ -23,6 +25,8 @@ pub struct Face {
     pub copyright: Option<String>,
     pub glyph_count: u16,
     pub variable: bool,
+    /// GSUB and GPOS feature tags, sorted.
+    pub features: Vec<String>,
     pub starred: bool,
     pub added_at: i64,
 }
@@ -44,6 +48,16 @@ pub struct Tag {
 pub struct Collection {
     pub id: String,
     pub name: String,
+    pub created_at: i64,
+}
+
+/// A saved search: its `query` (JSON, evaluated by the interface) picks the families.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartSet {
+    pub id: String,
+    pub name: String,
+    pub query: String,
     pub created_at: i64,
 }
 
@@ -87,6 +101,7 @@ pub struct Library {
     pub tags: Vec<Tag>,
     /// manual tag id → face ids
     pub tag_membership: HashMap<String, Vec<String>>,
+    pub smart_sets: Vec<SmartSet>,
     /// file path → activation scope (only active files are listed)
     pub activation: HashMap<String, Scope>,
     pub fonts_dir: String,

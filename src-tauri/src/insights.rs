@@ -284,6 +284,7 @@ mod tests {
                 style: "Regular".into(),
                 full_name: name.into(),
                 weight: 400,
+                width: 5,
                 italic: false,
                 mono: false,
                 classification: "sans".into(),
@@ -294,6 +295,7 @@ mod tests {
                 copyright: None,
                 glyph_count: 1,
                 variable: false,
+                features: Vec::new(),
                 starred: false,
                 added_at: 0,
             }

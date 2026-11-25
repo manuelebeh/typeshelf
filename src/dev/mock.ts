@@ -3,7 +3,7 @@
  * is opened in a regular browser. It never ships: main.ts loads it only in dev mode
  * outside Tauri. Previews use fonts bundled with macOS.
  */
-import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, Tag } from "../api";
+import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, SmartSet, Tag } from "../api";
 
 const SUP = "/System/Library/Fonts/Supplemental";
 let n = 0;
@@ -16,6 +16,7 @@ const face = (path: string, family: string, style: string, extra: Partial<Face> 
   style,
   fullName: `${family} ${style}`,
   weight: 400,
+  width: 5,
   italic: false,
   mono: false,
   classification: "serif",
@@ -26,19 +27,20 @@ const face = (path: string, family: string, style: string, extra: Partial<Face> 
   copyright: null,
   glyphCount: 600,
   variable: false,
+  features: ["kern", "liga"],
   starred: false,
   addedAt: Date.now() / 1000 - 3600,
   ...extra,
 });
 
 const faces: Face[] = [
-  face(`${SUP}/Georgia.ttf`, "Georgia", "Regular", { designer: "Matthew Carter" }),
+  face(`${SUP}/Georgia.ttf`, "Georgia", "Regular", { designer: "Matthew Carter", features: ["kern", "liga", "lnum", "onum", "pnum", "tnum"] }),
   face(`${SUP}/Georgia Italic.ttf`, "Georgia", "Italic", { italic: true }),
-  face(`${SUP}/Georgia Bold.ttf`, "Georgia", "Bold", { weight: 700 }),
+  face(`${SUP}/Georgia Bold.ttf`, "Georgia", "Bold", { weight: 700, features: ["kern", "liga", "onum"] }),
   face(`${SUP}/Courier New.ttf`, "Courier New", "Regular", { mono: true, classification: "mono" }),
-  face(`${SUP}/Skia.ttf`, "Skia", "Regular", { variable: true, classification: "sans", starred: true }),
+  face(`${SUP}/Skia.ttf`, "Skia", "Regular", { variable: true, classification: "sans", starred: true, features: ["kern", "liga", "smcp", "ss01", "tnum"] }),
   face(`${SUP}/Trebuchet MS.ttf`, "Trebuchet MS", "Regular", { classification: "sans" }),
-  face(`${SUP}/Zapfino.ttf`, "Zapfino", "Regular", { classification: "script", addedAt: 0 }),
+  face(`${SUP}/Zapfino.ttf`, "Zapfino", "Regular", { classification: "script", addedAt: 0, width: 7, features: ["calt", "kern", "liga", "salt", "swsh"] }),
 ];
 
 const systemFaces: Face[] = [
@@ -47,7 +49,7 @@ const systemFaces: Face[] = [
   face(`${SUP}/Arial Italic.ttf`, "Arial", "Italic", { classification: "sans", italic: true }),
   face(`${SUP}/Verdana.ttf`, "Verdana", "Regular", { classification: "sans" }),
   face(`${SUP}/Times New Roman.ttf`, "Times New Roman", "Regular"),
-  face(`${SUP}/Impact.ttf`, "Impact", "Regular", { classification: "display", weight: 900 }),
+  face(`${SUP}/Impact.ttf`, "Impact", "Regular", { classification: "display", weight: 900, width: 3, features: ["kern"] }),
   face(`${SUP}/Andale Mono.ttf`, "Andale Mono", "Regular", { classification: "mono", mono: true }),
   face(`${SUP}/Apple Chancery.ttf`, "Apple Chancery", "Chancery", { classification: "script" }),
 ].map((f, i) => ({ ...f, id: `sys-demo-${i}`, addedAt: 1_700_000_000 + i * 86400 }));
@@ -70,6 +72,8 @@ const tags: Tag[] = [
 ];
 const tagMembership: Record<string, string[]> = { "default-tag-0": [faces[6].id] };
 const activation: Record<string, Scope> = { [faces[3].path]: "persistent", [faces[4].path]: "temporary" };
+
+const smartSets: SmartSet[] = [];
 
 const familyFaces = (families: string[]) => faces.filter((f) => families.includes(f.family));
 
@@ -228,7 +232,7 @@ const commands: Record<string, (a: any) => unknown> = {
     faces.push(...added);
     return { summary: { imported: added.length, skipped: 0, failures: [] }, paths: added.map((f) => f.path) };
   },
-  load_library: (): Library => ({ faces, collections, membership, tags, tagMembership, activation, fontsDir: "~/Typeshelf/Fonts" }),
+  load_library: (): Library => ({ faces, collections, membership, tags, tagMembership, smartSets, activation, fontsDir: "~/Typeshelf/Fonts" }),
   system_fonts: () => systemFaces,
   // Referencing installed fonts (favourite, tag, collection) records them in the library.
   import_paths: ({ paths }: { paths: string[] }) => {
@@ -276,6 +280,14 @@ const commands: Record<string, (a: any) => unknown> = {
     ids.forEach((x) => (tagged ? current.add(x) : current.delete(x)));
     tagMembership[id] = [...current];
   },
+  create_smart_set: ({ name, query }: { name: string; query: string }) => {
+    const id = `s${Date.now()}`;
+    smartSets.push({ id, name, query, createdAt: 0 });
+    return id;
+  },
+  update_smart_set: ({ id, name, query }: { id: string; name: string; query: string }) =>
+    smartSets.filter((s) => s.id === id).forEach((s) => Object.assign(s, { name, query })),
+  delete_smart_set: ({ id }: { id: string }) => void smartSets.splice(smartSets.findIndex((s) => s.id === id), 1),
   face_details: ({ id }: { id: string }) => details(id),
   // Demo heuristic: Latin-script samples are supported, other scripts are not.
   language_support: ({ samples }: { samples: string[] }) =>

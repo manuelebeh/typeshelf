@@ -10,6 +10,8 @@ export type Field =
   | "manufacturer"
   | "classification"
   | "weight"
+  | "width"
+  | "feature"
   | "glyphs"
   | "italic"
   | "mono"
@@ -31,7 +33,7 @@ export interface Rule {
   conditions: Condition[];
 }
 
-type Kind = "text" | "enum" | "number" | "bool" | "days";
+type Kind = "text" | "enum" | "number" | "bool" | "days" | "tag";
 
 export const FIELDS: Record<Field, { label: string; kind: Kind }> = {
   family: { label: N_("Family"), kind: "text" },
@@ -40,6 +42,8 @@ export const FIELDS: Record<Field, { label: string; kind: Kind }> = {
   manufacturer: { label: N_("Foundry"), kind: "text" },
   classification: { label: N_("Classification"), kind: "enum" },
   weight: { label: N_("Weight"), kind: "number" },
+  width: { label: N_("Width class (1–9)"), kind: "number" },
+  feature: { label: N_("OpenType feature"), kind: "tag" },
   glyphs: { label: N_("Glyph count"), kind: "number" },
   italic: { label: N_("Italic"), kind: "bool" },
   mono: { label: N_("Monospaced"), kind: "bool" },
@@ -70,6 +74,10 @@ export const OPS: Record<Kind, { op: Op; label: string }[]> = {
     { op: "isFalse", label: N_("no") },
   ],
   days: [{ op: "within", label: N_("within the last (days)") }],
+  tag: [
+    { op: "is", label: N_("has") },
+    { op: "isNot", label: N_("does not have") },
+  ],
 };
 
 export const defaultCondition = (field: Field = "family"): Condition => {
@@ -112,8 +120,13 @@ function test(c: Condition, face: Face, fam: FamilyFacts, now: number): boolean 
     const days = Number(c.value);
     return Number.isFinite(days) && face.addedAt >= now - days * 86400;
   }
+  if (kind === "tag") {
+    const tag = c.value.trim().toLowerCase();
+    if (!tag) return false;
+    return face.features.includes(tag) === (c.op === "is");
+  }
   if (kind === "number") {
-    const value = c.field === "weight" ? face.weight : face.glyphCount;
+    const value = c.field === "weight" ? face.weight : c.field === "width" ? face.width : face.glyphCount;
     const target = Number(c.value);
     if (!Number.isFinite(target)) return false;
     return c.op === "gte" ? value >= target : c.op === "lte" ? value <= target : value === target;

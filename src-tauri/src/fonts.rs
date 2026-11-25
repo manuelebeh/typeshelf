@@ -62,6 +62,7 @@ pub fn scan(path: &Path, added_at: i64) -> Result<Vec<Face>, String> {
             style,
             full_name,
             weight: face.weight().to_number(),
+            width: face.width().to_number(),
             italic: face.is_italic(),
             mono: face.is_monospaced(),
             version: name(&face, &[name_id::VERSION]),
@@ -71,6 +72,7 @@ pub fn scan(path: &Path, added_at: i64) -> Result<Vec<Face>, String> {
             copyright: name(&face, &[name_id::COPYRIGHT_NOTICE]),
             glyph_count: face.number_of_glyphs(),
             variable: face.is_variable(),
+            features: feature_tags(&face),
             starred: false,
             added_at,
         });
@@ -158,6 +160,23 @@ fn classify(face: &ttf_parser::Face, family: &str) -> &'static str {
     }
 }
 
+/// The OpenType features a face offers, from both layout tables.
+fn feature_tags(face: &ttf_parser::Face) -> Vec<String> {
+    let mut features = BTreeSet::new();
+    for table in [face.tables().gsub, face.tables().gpos].into_iter().flatten() {
+        for feature in table.features {
+            features.insert(String::from_utf8_lossy(&feature.tag.to_bytes()).into_owned());
+        }
+    }
+    features.into_iter().collect()
+}
+
+/// Width class and feature tags of one face, for rows imported before they were stored.
+pub fn metrics(data: &[u8], index: u32) -> Option<(u16, Vec<String>)> {
+    let face = ttf_parser::Face::parse(data, index).ok()?;
+    Some((face.width().to_number(), feature_tags(&face)))
+}
+
 /// Character map, OpenType features and variation axes for the detail panel.
 pub fn details(path: &Path, index: u32) -> Result<FaceDetails, String> {
     let data = map(path)?;
@@ -177,13 +196,6 @@ pub fn details(path: &Path, index: u32) -> Result<FaceDetails, String> {
     }
     let truncated = chars.len() > MAX_CHARACTERS;
     let characters = chars.into_iter().take(MAX_CHARACTERS).collect();
-
-    let mut features = BTreeSet::new();
-    for table in [face.tables().gsub, face.tables().gpos].into_iter().flatten() {
-        for feature in table.features {
-            features.insert(String::from_utf8_lossy(&feature.tag.to_bytes()).into_owned());
-        }
-    }
 
     let axes = face
         .variation_axes()
@@ -212,7 +224,7 @@ pub fn details(path: &Path, index: u32) -> Result<FaceDetails, String> {
     Ok(FaceDetails {
         characters,
         characters_truncated: truncated,
-        features: features.into_iter().collect(),
+        features: feature_tags(&face),
         axes,
         format: format.into(),
         file_size: data.len() as u64,
@@ -377,6 +389,9 @@ mod tests {
         assert_eq!(faces.len(), 1);
         assert!(!faces[0].family.is_empty());
         assert!(!faces[0].ps_name.is_empty());
+        assert!((1..=9).contains(&faces[0].width));
+        assert!(!faces[0].features.is_empty());
+        assert!(faces[0].features.windows(2).all(|w| w[0] < w[1]));
         let d = details(&path, 0).unwrap();
         assert!(d.characters.contains(&('A' as u32)));
     }

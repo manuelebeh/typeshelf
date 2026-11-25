@@ -117,9 +117,9 @@ export function editTag(
           value = select;
         } else if (kind !== "bool") {
           const input = el("input", {
-            type: kind === "text" ? "text" : "number",
+            type: kind === "number" || kind === "days" ? "number" : "text",
             value: c.value,
-            placeholder: kind === "text" ? t("text") : t("value"),
+            placeholder: kind === "text" ? t("text") : kind === "tag" ? "smcp" : t("value"),
           });
           input.oninput = () => {
             c.value = input.value;

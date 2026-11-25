@@ -7,6 +7,7 @@ const PATHS: Record<string, string> = {
   recent: `<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>`,
   system: `<rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M8.5 19.5h7M12 16v3.5"/>`,
   shapes: `<circle cx="8" cy="8" r="3.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/><path d="m16.5 3.8 3.5 6h-7zM4.5 15.5l4 4M8.5 15.5l-4 4"/>`,
+  smartSet: `<path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2h7.2a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="m12 10.3 1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"/>`,
   folder: `<path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2h7.2a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>`,
   plus: `<path d="M12 5.5v13M5.5 12h13"/>`,
   search: `<circle cx="10.8" cy="10.8" r="6"/><path d="m15.3 15.3 4.7 4.7"/>`,
