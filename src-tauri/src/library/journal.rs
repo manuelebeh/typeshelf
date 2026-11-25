@@ -150,7 +150,7 @@ pub struct Event {
 }
 
 impl Event {
-    fn to_line(&self) -> Result<String, String> {
+    pub(super) fn to_line(&self) -> Result<String, String> {
         let mut value = serde_json::to_value(&self.op).map_err(|e| e.to_string())?;
         let map = value.as_object_mut().ok_or("Invalid event")?;
         map.insert("v".into(), VERSION.into());

@@ -56,19 +56,29 @@ impl std::ops::Deref for Session {
     }
 }
 
+/// Every change of every journal, in the one order all computers agree on. The same line found
+/// twice (a copied journal) counts once; lines that only share a position are all kept.
+fn merged(root: &Path) -> R<(Vec<Event>, bool)> {
+    let mut lines = Vec::new();
+    let mut newer = false;
+    for file in journal::files(root)? {
+        let journal = journal::read(&file)?;
+        newer |= journal.newer;
+        for event in journal.events {
+            lines.push((event.to_line()?, event));
+        }
+    }
+    lines.sort_by(|(x, a), (y, b)| (a.t, &a.dev, a.seq, x).cmp(&(b.t, &b.dev, b.seq, y)));
+    lines.dedup_by(|a, b| a.0 == b.0);
+    Ok((lines.into_iter().map(|(_, event)| event).collect(), newer))
+}
+
 impl OpenLibrary {
     /// Reads every journal and rebuilds the cache from them.
     pub fn open(root: &Path, who: &Opener) -> R<OpenLibrary> {
         let manifest = manifest::read(root)?;
-        let mut events = Vec::new();
-        let mut newer = manifest.format > manifest::FORMAT;
-        for file in journal::files(root)? {
-            let journal = journal::read(&file)?;
-            newer |= journal.newer;
-            events.extend(journal.events);
-        }
-        events.sort_by(|a, b| (a.t, &a.dev, a.seq).cmp(&(b.t, &b.dev, b.seq)));
-        events.dedup_by(|a, b| a.dev == b.dev && a.seq == b.seq);
+        let (events, newer) = merged(root)?;
+        let newer = newer || manifest.format > manifest::FORMAT;
 
         let devices: HashMap<String, String> = events
             .iter()
@@ -255,4 +265,139 @@ pub fn default_ops(now: i64) -> Vec<Op> {
         created_at,
     }));
     ops
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Face;
+
+    /// A package that several pretend computers write into.
+    pub(super) struct Shared {
+        pub dir: PathBuf,
+        pub root: PathBuf,
+    }
+
+    impl Shared {
+        pub fn new() -> Shared {
+            let dir = std::env::temp_dir().join(format!("typeshelf-shared-{}", uuid::Uuid::new_v4()));
+            let root = dir.join("Team.typeshelf");
+            OpenLibrary::create_package(&root, "a", 1).unwrap();
+            Shared { dir, root }
+        }
+
+        pub fn open(&self, device: &str) -> OpenLibrary {
+            let cache = self.dir.join(format!("{device}.sqlite"));
+            OpenLibrary::open(&self.root, &Opener { device_id: device, device_name: device, cache: &cache }).unwrap()
+        }
+
+        /// Writes lines into the journal of `device` with chosen clocks, as if made offline.
+        pub fn write(&self, device: &str, events: &[(u64, u64, Op)]) {
+            let events: Vec<Event> =
+                events.iter().map(|(seq, ms, op)| Event { dev: device.into(), seq: *seq, t: Clock(*ms, 0), op: op.clone() }).collect();
+            journal::append(&journal::path_for(&self.root, device), &events).unwrap();
+        }
+    }
+
+    impl Drop for Shared {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    pub(super) fn face(id: &str, ps_name: &str) -> Op {
+        let face = Face {
+            id: id.into(),
+            path: String::new(),
+            face_index: 0,
+            ps_name: ps_name.into(),
+            family: ps_name.into(),
+            style: "Regular".into(),
+            full_name: ps_name.into(),
+            weight: 400,
+            width: 5,
+            italic: false,
+            mono: false,
+            classification: "sans".into(),
+            version: None,
+            designer: None,
+            manufacturer: None,
+            license: None,
+            copyright: None,
+            glyph_count: 1,
+            variable: false,
+            features: Vec::new(),
+            starred: false,
+            added_at: 1,
+            available: true,
+            imported_on: None,
+        };
+        Op::FaceAdd(Box::new(face_data(&face, FileRef::Inside { rel: format!("Fonts/{id}.ttf") })))
+    }
+
+    fn tag(id: &str, name: &str) -> Op {
+        Op::TagSave { id: id.into(), name: name.into(), color: "red".into(), rule: None, created_at: 1 }
+    }
+
+    fn collection(id: &str, name: &str) -> Op {
+        Op::CollectionCreate { id: id.into(), name: name.into(), created_at: 1 }
+    }
+
+    #[test]
+    fn two_devices_converge_in_any_read_order() {
+        let shared = Shared::new();
+        shared.write("z", &[(1, 10, collection("c", "Brand")), (2, 30, Op::CollectionRename { id: "c".into(), name: "From z".into() })]);
+        shared.write("a", &[(1, 20, Op::CollectionRename { id: "c".into(), name: "From a".into() })]);
+        for device in ["a", "z", "new"] {
+            // The latest change wins whatever the file order.
+            assert_eq!(shared.open(device).lock().collections().unwrap()[0].name, "From z");
+        }
+        // A copy of a journal, as sync services make them, changes nothing.
+        fs::copy(journal::path_for(&shared.root, "z"), shared.root.join(journal::FOLDER).join("z (conflicted copy).jsonl")).unwrap();
+        assert_eq!(merged(&shared.root).unwrap().0.len(), 3);
+        // Two different changes at the same position are both kept.
+        let fork = shared.root.join(journal::FOLDER).join("a 2.jsonl");
+        journal::append(&fork, &[Event { dev: "a".into(), seq: 1, t: Clock(25, 0), op: collection("d", "Fork") }]).unwrap();
+        assert_eq!(shared.open("new").lock().collections().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn delete_wins_over_concurrent_edit() {
+        let shared = Shared::new();
+        shared.write(
+            "a",
+            &[
+                (1, 10, tag("t", "Old")),
+                (2, 11, collection("c", "Brand")),
+                (3, 20, Op::TagDelete { id: "t".into() }),
+                (4, 21, Op::CollectionDelete { id: "c".into() }),
+            ],
+        );
+        // Made later, by someone who had not seen the deletions.
+        shared.write("b", &[(1, 30, tag("t", "Renamed")), (2, 31, Op::CollectionRename { id: "c".into(), name: "Renamed".into() })]);
+        let library = shared.open("c");
+        assert!(library.lock().tags().unwrap().is_empty());
+        assert!(library.lock().collections().unwrap().is_empty());
+    }
+
+    #[test]
+    fn concurrent_import_of_same_font_is_aliased() {
+        let shared = Shared::new();
+        shared.write("a", &[(1, 10, face("one", "Inter-Regular"))]);
+        shared.write(
+            "b",
+            &[
+                (1, 11, face("two", "Inter-Regular")),
+                (2, 12, collection("c", "Brand")),
+                (3, 13, Op::CollectionAdd { id: "c".into(), faces: vec!["two".into()] }),
+                (4, 14, Op::FaceStar { ids: vec!["two".into()], starred: true }),
+            ],
+        );
+        let library = shared.open("c");
+        let faces = library.lock().faces().unwrap();
+        assert_eq!(faces.iter().map(|f| (f.id.as_str(), f.starred)).collect::<Vec<_>>(), [("one", true)]);
+        assert_eq!(library.lock().membership().unwrap()["c"], ["one"]);
+        library.lock().commit(vec![Op::FaceRemove { ids: vec!["two".into()] }]).unwrap();
+        assert!(library.lock().faces().unwrap().is_empty());
+    }
 }

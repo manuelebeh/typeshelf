@@ -3,7 +3,7 @@
 
 use crate::library::journal::{Event, FaceData, FileRef, Op};
 use crate::model::{Collection, Face, SmartSet, Tag};
-use rusqlite::{params, Connection, OpenFlags, Row, Transaction};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row, Transaction};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
@@ -55,9 +55,11 @@ const SCHEMA: &str = "
         PRIMARY KEY (tag_id, face_id)
     );
     CREATE TABLE smart_set (id TEXT PRIMARY KEY, name TEXT NOT NULL, query TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE deleted_tag (id TEXT PRIMARY KEY);
+    CREATE TABLE face_alias (alias TEXT PRIMARY KEY, id TEXT NOT NULL);
 ";
 
-const TABLES: &[&str] = &["collection_face", "face_tag", "face", "collection", "tag", "smart_set"];
+const TABLES: &[&str] = &["collection_face", "face_tag", "face", "collection", "tag", "smart_set", "deleted_tag", "face_alias"];
 
 /// What replaying needs to know about this computer.
 pub struct Here<'a> {
@@ -176,14 +178,20 @@ impl Db {
     }
 }
 
-/// One change. Changes to something that is gone do nothing.
+/// The entry a face id stands for: two computers that imported the same font gave it two ids.
+fn entry(tx: &Transaction, id: &str) -> rusqlite::Result<String> {
+    let aliased = tx.prepare_cached("SELECT id FROM face_alias WHERE alias = ?1")?.query_row([id], |r| r.get(0)).optional()?;
+    Ok(aliased.unwrap_or_else(|| id.to_string()))
+}
+
+/// One change. Changes to something that is gone do nothing: deleting wins over editing.
 fn apply(tx: &Transaction, op: &Op, here: &Here) -> rusqlite::Result<()> {
     match op {
         Op::Device { .. } => {}
         Op::FaceAdd(face) => insert_face(tx, face, here)?,
         Op::FaceRemove { ids } => {
             for id in ids {
-                tx.execute("DELETE FROM face WHERE id = ?1", [id])?;
+                tx.execute("DELETE FROM face WHERE id = ?1", [entry(tx, id)?])?;
             }
         }
         Op::FaceRepoint { id, file, face_index, version, glyph_count, width, features } => {
@@ -198,13 +206,13 @@ fn apply(tx: &Transaction, op: &Op, here: &Here) -> rusqlite::Result<()> {
                     width,
                     features.join(" "),
                     imported_on(file, here),
-                    id
+                    entry(tx, id)?
                 ],
             )?;
         }
         Op::FaceStar { ids, starred } => {
             for id in ids {
-                tx.execute("UPDATE face SET starred = ?1 WHERE id = ?2", params![starred, id])?;
+                tx.execute("UPDATE face SET starred = ?1 WHERE id = ?2", params![starred, entry(tx, id)?])?;
             }
         }
         Op::CollectionCreate { id, name, created_at } => {
@@ -221,18 +229,19 @@ fn apply(tx: &Transaction, op: &Op, here: &Here) -> rusqlite::Result<()> {
                 tx.execute(
                     "INSERT OR IGNORE INTO collection_face (collection_id, face_id)
                      SELECT c.id, f.id FROM collection c, face f WHERE c.id = ?1 AND f.id = ?2",
-                    params![id, face],
+                    params![id, entry(tx, face)?],
                 )?;
             }
         }
         Op::CollectionRemove { id, faces } => {
             for face in faces {
-                tx.execute("DELETE FROM collection_face WHERE collection_id = ?1 AND face_id = ?2", params![id, face])?;
+                tx.execute("DELETE FROM collection_face WHERE collection_id = ?1 AND face_id = ?2", params![id, entry(tx, face)?])?;
             }
         }
         Op::TagSave { id, name, color, rule, created_at } => {
             tx.execute(
-                "INSERT INTO tag (id, name, color, rule, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO tag (id, name, color, rule, created_at)
+                 SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM deleted_tag WHERE id = ?1)
                  ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color, rule = excluded.rule",
                 params![id, name, color, rule, created_at],
             )?;
@@ -243,6 +252,8 @@ fn apply(tx: &Transaction, op: &Op, here: &Here) -> rusqlite::Result<()> {
         }
         Op::TagDelete { id } => {
             tx.execute("DELETE FROM tag WHERE id = ?1", [id])?;
+            // Saving a tag creates it: without this, a concurrent edit would bring it back.
+            tx.execute("INSERT OR IGNORE INTO deleted_tag (id) VALUES (?1)", [id])?;
         }
         Op::TagSet { id, faces, tagged } => {
             for face in faces {
@@ -252,7 +263,7 @@ fn apply(tx: &Transaction, op: &Op, here: &Here) -> rusqlite::Result<()> {
                 } else {
                     "DELETE FROM face_tag WHERE tag_id = ?1 AND face_id = ?2"
                 };
-                tx.execute(sql, params![id, face])?;
+                tx.execute(sql, params![id, entry(tx, face)?])?;
             }
         }
         Op::SetCreate { id, name, query, created_at } => {
@@ -280,7 +291,15 @@ fn imported_on(file: &FileRef, here: &Here) -> Option<String> {
 }
 
 fn insert_face(tx: &Transaction, face: &FaceData, here: &Here) -> rusqlite::Result<()> {
-    // One entry per PostScript name: the first import wins.
+    // One entry per PostScript name: the first import wins, and later ids stand for it.
+    let existing: Option<String> =
+        tx.prepare_cached("SELECT id FROM face WHERE ps_name = ?1")?.query_row([&face.ps_name], |r| r.get(0)).optional()?;
+    if let Some(existing) = existing {
+        if existing != face.id {
+            tx.execute("INSERT OR REPLACE INTO face_alias (alias, id) VALUES (?1, ?2)", params![face.id, existing])?;
+        }
+        return Ok(());
+    }
     tx.prepare_cached(
         "INSERT OR IGNORE INTO face (id, path, face_index, ps_name, family, style, full_name, weight, width, italic, mono,
              classification, version, designer, manufacturer, license, copyright, glyph_count, variable, features,
