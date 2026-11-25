@@ -3,7 +3,7 @@
  * is opened in a regular browser. It never ships: main.ts loads it only in dev mode
  * outside Tauri. Previews use fonts bundled with macOS.
  */
-import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, LibraryInfo, PluginInstallState, Scope, SmartSet, Tag } from "../api";
+import type { BridgeResult, Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, LibraryInfo, PluginInstallState, Scope, SmartSet, Tag } from "../api";
 
 const SUP = "/System/Library/Fonts/Supplemental";
 let n = 0;
@@ -349,9 +349,38 @@ const commands: Record<string, (a: any) => unknown> = {
 };
 
 let callbackId = 0;
+const callbacks = new Map<number, (event: unknown) => void>();
+const listeners = new Map<string, number>();
+
+/** A Photoshop that answers every command shortly after it is sent. */
+let commandId = 0;
+function answer(kind: BridgeResult["kind"]): number {
+  const id = ++commandId;
+  const selection = { text: "Summer Sounds", font: "Georgia-Bold", size: 72, color: "#1b2a8a", tracking: 20, count: 1 };
+  const payload: BridgeResult = {
+    client: "Photoshop",
+    id,
+    kind,
+    ok: true,
+    error: null,
+    count: 1,
+    selection: kind === "selection" ? selection : null,
+  };
+  setTimeout(() => callbacks.get(listeners.get("bridge-result") ?? 0)?.({ event: "bridge-result", id: 0, payload }), 300);
+  return id;
+}
+Object.assign(commands, {
+  bridge_apps: () => [{ name: "Photoshop", document: "Poster.psd", can: ["apply", "selection"] }],
+  bridge_apply: () => answer("apply"),
+  bridge_request_selection: () => answer("selection"),
+});
+
 (window as any).__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
-  transformCallback: () => ++callbackId,
+  transformCallback: (callback: (event: unknown) => void) => {
+    callbacks.set(++callbackId, callback);
+    return callbackId;
+  },
   // `<library id>~<face id>`, as the real protocol expects.
   convertFileSrc: (id: string) => `/@fs${[...faces, ...systemFaces].find((f) => f.id === id.split("~")[1])?.path ?? ""}`,
   invoke: async (cmd: string, args: unknown) => {
@@ -362,6 +391,10 @@ let callbackId = 0;
       return window.confirm(message) ? ok : cancel;
     }
     if (cmd === "plugin:dialog|save" || cmd === "plugin:dialog|open") return window.prompt("Path", "/Users/demo/My library.typeshelf");
+    if (cmd === "plugin:event|listen") {
+      const { event, handler } = args as { event: string; handler: number };
+      listeners.set(event, handler);
+    }
     if (cmd.startsWith("plugin:")) return ++callbackId;
     const handler = commands[cmd];
     if (!handler) throw new Error(`Unknown command in demo mode: ${cmd}`);

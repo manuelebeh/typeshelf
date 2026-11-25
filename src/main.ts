@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type DuplicateCopy, type DuplicateGroup, type Insights, type Library, type LibraryInfo, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type SmartSet, type Tag } from "./api";
+import { api, fontURL, type BridgeResult, type DesignSelection, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type DuplicateCopy, type DuplicateGroup, type Insights, type Library, type LibraryInfo, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type SmartSet, type Tag } from "./api";
 import {
   categoryLabel,
   classOf,
@@ -35,6 +35,7 @@ import {
   type Query,
   type Range,
 } from "./filters";
+import { closestFace, oneLine, selectionCSS } from "./design";
 import { hydrateIcons, icon } from "./icons";
 import { dateLocale, N_, setLanguage, t, tn, translateStatic, type Language } from "./i18n";
 import { fileName, selectByRule, selectionImpact, versionNumber, type SelectRule } from "./insights";
@@ -168,6 +169,8 @@ const state = {
   /** Files ticked for the Trash. */
   insightsSelected: new Set<string>(),
   insightsLimit: 100,
+  /** "Preview in your design": the text selected in an application, shown in every family. */
+  design: null as { client: string; selection: DesignSelection } | null,
 };
 
 const INSIGHTS_PAGE = 100;
@@ -1321,6 +1324,7 @@ function renderGoogleFilterBar(bar: HTMLElement, n: number) {
 function renderList() {
   $(".list-pane").classList.toggle("is-insights", isInsights());
   $("#family-list").classList.toggle("insights", isInsights());
+  renderDesignBar();
   if (isInsights()) return renderInsights();
   renderFilterBar();
   if (isGoogle()) return renderGoogleList();
@@ -1352,6 +1356,7 @@ function renderList() {
   }
 
   list.classList.remove("is-empty");
+  updateDesignContext();
   list.innerHTML = settings.view === "rows" ? renderTable(families) : families.map(renderCard).join("");
 }
 
@@ -1690,10 +1695,11 @@ function renderCard(fam: Family): string {
       <span class="card-name">${esc(fam.name)}</span>
       <span class="card-meta">· ${tn(fam.faces.length, "{n} style", "{n} styles")}</span>
       ${fam.variable ? `<span class="pill">VAR</span>` : ""}
+      ${currentPill(fam)}
       ${chips(fam)}
       <span class="card-actions">${starButton(fam)}${statusControl(fam, act)}</span>
     </div>
-    <div class="preview" style="font-family:${cssFont(fam.rep)}">${esc(state.previewText || fam.name)}</div>
+    <div class="preview" style="${previewStyle(cardFace(fam))}">${esc(previewTextOf(fam.name))}</div>
   </div>`;
 }
 
@@ -1715,8 +1721,8 @@ function renderTable(families: Family[]): string {
     const row = `<div class="t-row${fam.key === state.selected ? " selected" : ""}${act === "missing" ? " missing" : ""}" data-family="${esc(fam.key)}" draggable="true">
       <span>${many ? `<button class="chevron${open ? " open" : ""}" data-action="expand" aria-label="${esc(t("Show the styles"))}">${icon("chevron", 14)}</button>` : ""}</span>
       <span class="dot ${act}" title="${esc(activationLabels()[act])}"></span>
-      <span class="t-preview" style="font-family:${cssFont(fam.rep)}">${esc(state.previewText || fam.name)}</span>
-      <span class="t-name">${esc(fam.name)}${many ? ` <span class="muted">(${fam.faces.length})</span>` : ""} ${chips(fam)}</span>
+      <span class="t-preview" style="${previewStyle(cardFace(fam))}">${esc(previewTextOf(fam.name))}</span>
+      <span class="t-name">${esc(fam.name)}${many ? ` <span class="muted">(${fam.faces.length})</span>` : ""} ${currentPill(fam)} ${chips(fam)}</span>
       <span class="t-center">${starButton(fam)}</span>
       <span class="muted">${formatOf(fam.rep.path)}</span>
       <span class="muted">${dateOf(addedAt(fam))}</span>
@@ -1729,7 +1735,7 @@ function renderTable(families: Family[]): string {
         .map(
           (f) => `<div class="t-row t-face" data-family="${esc(fam.key)}" data-face="${esc(f.id)}">
         <span></span><span></span>
-        <span class="t-preview" style="font-family:${cssFont(f)}">${esc(state.previewText || f.fullName)}</span>
+        <span class="t-preview" style="${previewStyle(f)}">${esc(previewTextOf(f.fullName))}</span>
         <span class="t-name">${esc(f.style)} <span class="muted">· ${f.weight}${f.italic ? ` · ${t("italic")}` : ""}</span></span>
         <span></span>
         <span class="muted">${formatOf(f.path)}</span>
@@ -1758,16 +1764,197 @@ function refreshPreviews() {
     if (row.dataset.gfamily) return void (el.textContent = state.previewText || row.dataset.gfamily);
     const fam = familyByKey(row.dataset.family!);
     const face = row.dataset.face ? fam?.faces.find((f) => f.id === row.dataset.face) : null;
-    el.textContent = state.previewText || face?.fullName || fam?.name || "";
+    el.textContent = previewTextOf(face?.fullName || fam?.name || "");
   });
   $("#preview-size-label").textContent = String(state.previewSize);
   if (state.selected?.startsWith("g:") || state.tab === "styles" || state.tab === "features" || state.tab === "axes") renderDetail();
 }
 
+// ------------------------------------------------------------------ design applications
+
+const designActive = () => !!state.design && !isGoogle() && !isInsights();
+
+/** The face of the font used in the document and the card colour, read once per rendering. */
+let designContext: { reference: Face | null; card: string } = { reference: null, card: "" };
+
+function updateDesignContext() {
+  if (!state.design) return;
+  const font = state.design.selection.font;
+  designContext = {
+    reference: state.families.flatMap((f) => f.faces).find((f) => f.psName === font) ?? null,
+    card: getComputedStyle(document.documentElement).getPropertyValue("--card").trim(),
+  };
+}
+
+/** The style a family is applied with: the one picked, else the closest to the document's. */
+function matchingFace(fam: Family): Face {
+  const picked = fam.key === state.selected ? fam.faces.find((f) => f.id === state.faceId) : undefined;
+  if (picked) return picked;
+  return designActive() && designContext.reference ? closestFace(fam.faces, designContext.reference) : fam.rep;
+}
+
+/** The face on a family's card: while previewing a design, the one that would be applied. */
+const cardFace = (fam: Family) => (designActive() ? matchingFace(fam) : fam.rep);
+
+const previewTextOf = (fallback: string) => (designActive() ? oneLine(state.design!.selection.text) : state.previewText || fallback);
+
+const previewStyle = (face: Face) =>
+  `font-family:${cssFont(face)}${designActive() ? selectionCSS(state.design!.selection, designContext.card) : ""}`;
+
+function currentPill(fam: Family): string {
+  const font = designActive() ? state.design!.selection.font : null;
+  return font && fam.faces.some((f) => f.psName === font) ? `<span class="pill current">${esc(t("Current"))}</span>` : "";
+}
+
+/** The cards follow the style picked for the selected family. */
+function refreshDesignFaces() {
+  $("#family-list")
+    .querySelectorAll<HTMLElement>(".font-card, .t-row:not(.t-face)")
+    .forEach((row) => {
+      const fam = familyByKey(row.dataset.family!);
+      const preview = row.querySelector<HTMLElement>(".preview, .t-preview");
+      if (fam && preview) preview.style.fontFamily = cssFont(cardFace(fam));
+    });
+}
+
+function renderDesignBar() {
+  const bar = $("#design-bar");
+  const active = designActive();
+  bar.hidden = !active;
+  $<HTMLInputElement>("#preview-text").disabled = active;
+  if (!active) return;
+  updateDesignContext();
+  const { client, selection } = state.design!;
+  const used = designContext.reference?.fullName ?? selection.font;
+  const style = [used, selection.size && Math.round(selection.size * 10) / 10].filter(Boolean).join(" · ");
+  const applicable = !!familyByKey(state.selected)?.paths.length;
+  bar.innerHTML = `
+    <strong>${esc(t("Preview from {app}", { app: client }))}</strong>
+    <span class="design-text">“${esc(oneLine(selection.text))}”</span>
+    <span class="muted">${esc(style)}</span>
+    <button type="button" data-design="refresh">${esc(t("Refresh"))}</button>
+    <button type="button" class="primary" data-design="apply"${applicable ? "" : " disabled"}>${esc(t("Apply"))}</button>
+    <button type="button" data-design="close">${esc(t("Close"))}</button>`;
+}
+
+function closeDesign() {
+  state.design = null;
+  renderList();
+}
+
+function openDesign(client: string, selection: DesignSelection) {
+  state.design = { client, selection };
+  if (isGoogle() || isInsights()) {
+    state.sidebar = "all";
+    state.selected = null;
+  }
+  const scroll = $("#family-list").scrollTop;
+  render();
+  $("#family-list").scrollTop = scroll;
+}
+
+/** "Apply in …" for each application able to take a font. */
+async function applyItems(fam: Family, face?: Face): Promise<MenuItem[]> {
+  if (!fam.paths.length) return [];
+  const apps = await api.bridgeApps().catch(() => []);
+  const chosen = face ?? matchingFace(fam);
+  return apps
+    .filter((a) => a.can.includes("apply"))
+    .map((a) => ({
+      label:
+        fam.faces.length > 1 ? t("Apply {style} in {app}", { style: chosen.style, app: a.name }) : t("Apply in {app}", { app: a.name }),
+      action: () => applyFont(a.name, chosen),
+    }));
+}
+
+async function showDesignMenu(button: HTMLElement) {
+  const apps = (await api.bridgeApps().catch(() => [])).filter((a) => a.can.includes("selection"));
+  menuBelow(
+    button,
+    apps.length
+      ? [
+          { label: t("Preview the selected text of"), header: true },
+          ...apps.map((a) => ({ label: a.document ? `${a.name} · ${a.document}` : a.name, action: () => requestSelection(a.name) })),
+        ]
+      : [{ label: t("Open the Typeshelf panel in Photoshop or Illustrator"), header: true }],
+  );
+}
+
+/** Commands sent and not yet answered, with the timer that gives up on them. */
+const awaiting = new Map<number, number>();
+/** Answers that arrived before the call sending their command returned. */
+const answered = new Set<number>();
+/** Selections asked again after applying: ignored if the preview was closed meanwhile. */
+const refreshes = new Set<number>();
+
+function awaitReply(id: number, client: string) {
+  if (answered.delete(id)) return;
+  awaiting.set(
+    id,
+    window.setTimeout(() => {
+      awaiting.delete(id);
+      toast(t("{app} did not answer", { app: client }), true);
+    }, 12_000),
+  );
+}
+
+const bridgeFailure = (client: string, error: unknown) =>
+  toast(String(error) === `${client} is not connected` ? t("{app} is not connected", { app: client }) : String(error), true);
+
+async function applyFont(client: string, face: Face) {
+  try {
+    awaitReply(await api.bridgeApply(client, face.psName), client);
+  } catch (e) {
+    return bridgeFailure(client, e);
+  }
+  // Applying may have activated the font.
+  reload();
+}
+
+function applyToDesign(key: string, faceId?: string) {
+  const fam = familyByKey(key);
+  if (!state.design || !fam?.paths.length) return;
+  applyFont(state.design.client, fam.faces.find((f) => f.id === faceId) ?? matchingFace(fam));
+}
+
+async function requestSelection(client: string, refresh = false) {
+  try {
+    const id = await api.bridgeRequestSelection(client);
+    if (refresh) refreshes.add(id);
+    awaitReply(id, client);
+  } catch (e) {
+    bridgeFailure(client, e);
+  }
+}
+
+function onBridgeResult(result: BridgeResult) {
+  const { client, id } = result;
+  if (id !== null) {
+    if (awaiting.has(id)) {
+      clearTimeout(awaiting.get(id));
+      awaiting.delete(id);
+    } else answered.add(id);
+    if (refreshes.delete(id) && state.design?.client !== client) return;
+  }
+  const reasons: Record<string, string> = {
+    no_document: t("No document is open"),
+    no_selection: t("Select some text first"),
+    font_unavailable: t("The application does not see this font yet. Try again."),
+  };
+  if (!result.ok) return toast(`${client} : ${reasons[result.error ?? ""] ?? result.error}`, true);
+  if (result.kind === "selection") {
+    return result.selection ? openDesign(client, result.selection) : toast(`${client} : ${reasons.no_selection}`, true);
+  }
+  toast(tn(result.count, "Applied in {app} ({n} text object)", "Applied in {app} ({n} text objects)", { app: client }));
+  // The document changed: show its new font as the current one.
+  if (state.design?.client === client) requestSelection(client, true);
+}
+
 // ------------------------------------------------------------------ rendering: detail
 
 function currentFace(fam: Family): Face {
-  return fam.faces.find((f) => f.id === state.faceId) ?? fam.rep;
+  // In "Preview in your design", the details show the style the card shows.
+  return fam.faces.find((f) => f.id === state.faceId) ?? cardFace(fam);
 }
 
 function renderDetail() {
@@ -2254,6 +2441,10 @@ function selectFamily(key: string | null, faceId: string | null = null) {
     .querySelectorAll<HTMLElement>(".font-card, .t-row:not(.t-face)")
     .forEach((row) => row.classList.toggle("selected", row.dataset.family === key));
   renderDetail();
+  if (designActive()) {
+    refreshDesignFaces();
+    renderDesignBar();
+  }
 }
 
 function applyFilter(name: string, value: string) {
@@ -2395,6 +2586,7 @@ function wire() {
   list.addEventListener("dblclick", (e) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>("[data-family]");
     if (!row || (e.target as HTMLElement).closest("button")) return;
+    if (designActive()) return void applyToDesign(row.dataset.family!, row.dataset.face);
     settings.inspector = true;
     selectFamily(row.dataset.family!);
   });
@@ -2403,8 +2595,10 @@ function wire() {
     const fam = row && familyByKey(row.dataset.family!);
     if (!fam) return;
     e.preventDefault();
-    selectFamily(fam.key);
-    showMenu(e.clientX, e.clientY, familyMenu([fam]));
+    const faceId = row.dataset.face ?? null;
+    selectFamily(fam.key, faceId);
+    const face = fam.faces.find((f) => f.id === faceId);
+    applyItems(fam, face).then((apply) => showMenu(e.clientX, e.clientY, [...apply, "-", ...familyMenu([fam])]));
   });
   list.addEventListener("dragstart", (e) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>("[data-family]");
@@ -2475,6 +2669,14 @@ function wire() {
   );
 
   const detail = $("#detail");
+  detail.addEventListener("contextmenu", (e) => {
+    const row = (e.target as HTMLElement).closest<HTMLElement>(".style-row[data-face]");
+    const fam = familyByKey(state.selected);
+    const face = row && fam?.faces.find((f) => f.id === row.dataset.face);
+    if (!fam || !face) return;
+    e.preventDefault();
+    applyItems(fam, face).then((apply) => showMenu(e.clientX, e.clientY, apply));
+  });
   detail.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     if (state.selected?.startsWith("g:")) {
@@ -2498,6 +2700,7 @@ function wire() {
     const faceRow = target.closest<HTMLElement>("[data-face]");
     if (faceRow) {
       state.faceId = faceRow.dataset.face!;
+      if (designActive()) refreshDesignFaces();
       return renderDetail();
     }
     const char = target.closest<HTMLElement>(".char[data-cp]");
@@ -2532,7 +2735,7 @@ function wire() {
       case "star":
         return void setStarred(fam, !fam.starred);
       case "more":
-        return menuBelow(actionEl, familyMenu([fam]));
+        return void applyItems(fam).then((apply) => menuBelow(actionEl, [...apply, "-", ...familyMenu([fam])]));
       case "close":
         return selectFamily(null);
       case "tags":
@@ -2556,6 +2759,7 @@ function wire() {
       state.faceId = target.value;
       state.selectedChar = null;
       renderDetail();
+      if (designActive()) refreshDesignFaces();
     }
   });
   detail.addEventListener("input", (e) => {
@@ -2591,6 +2795,14 @@ function wire() {
   $<HTMLInputElement>("#preview-size").addEventListener("input", (e) => {
     state.previewSize = +(e.target as HTMLInputElement).value;
     refreshPreviews();
+  });
+
+  $("#design-button").addEventListener("click", (e) => showDesignMenu(e.currentTarget as HTMLElement));
+  $("#design-bar").addEventListener("click", (e) => {
+    const action = (e.target as HTMLElement).closest<HTMLElement>("[data-design]")?.dataset.design;
+    if (action === "close") closeDesign();
+    else if (action === "refresh") requestSelection(state.design!.client);
+    else if (action === "apply" && state.selected) applyToDesign(state.selected);
   });
 
   $("#import-button").addEventListener("click", (e) =>
@@ -2705,6 +2917,8 @@ function wire() {
       settings.theme = theme.dataset.themeChoice as Theme;
       applyTheme();
       syncSettings();
+      // The backing of a design preview depends on the theme.
+      if (designActive()) renderList();
     }
   });
   $<HTMLSelectElement>("#setting-language").addEventListener("change", (e) => {
@@ -2758,12 +2972,13 @@ function wire() {
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     target.closest("[data-close]")?.closest("dialog")?.close("cancel");
-    if (!target.closest("#menu, #library-button, #import-button, #sort-button, #new-tag, [data-action='more'], [data-action='tags'], [data-insights='select']")) hideMenu();
+    if (!target.closest("#menu, #library-button, #import-button, #sort-button, #design-button, #new-tag, [data-action='more'], [data-action='tags'], [data-insights='select']")) hideMenu();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       const typing = (e.target as HTMLElement).closest("input, select, textarea, [contenteditable], dialog");
       if (!$("#menu").hidden) hideMenu();
+      else if (!typing && designActive()) closeDesign();
       else if (!typing && state.selected) selectFamily(null);
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
@@ -2837,6 +3052,9 @@ async function start() {
     );
   });
   listen<PluginActivity>("plugin-activity", (e) => onPluginActivity(e.payload)).catch(() => {
+    /* not running inside Tauri */
+  });
+  listen<BridgeResult>("bridge-result", (e) => onBridgeResult(e.payload)).catch(() => {
     /* not running inside Tauri */
   });
 }

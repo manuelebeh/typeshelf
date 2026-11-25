@@ -30,6 +30,7 @@ const PATHS: Record<string, string> = {
   cloud: `<path d="M7.2 18.5h9.6a4 4 0 0 0 .5-7.97 5.5 5.5 0 0 0-10.6 1.3A3.4 3.4 0 0 0 7.2 18.5z"/>`,
   refresh: `<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/>`,
   plug: `<path d="M9 3.5v4M15 3.5v4M6.5 7.5h11v3.5a5.5 5.5 0 0 1-11 0zM12 16.5v4"/>`,
+  design: `<path d="M4.5 8.5v-4h4M15.5 4.5h4v4M19.5 15.5v4h-4M8.5 19.5h-4v-4M8.5 9h7M12 9v6.5"/>`,
   palette: `<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor"/>`,
 };
 
