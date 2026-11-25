@@ -4,6 +4,18 @@ Panels that, when a document opens, list the fonts it uses and ask Typeshelf to 
 missing ones: from the library, or downloaded from Google Fonts when the family exists there.
 Typeshelf must be running.
 
+The Photoshop and Illustrator panels also work the other way round, from Typeshelf:
+
+- **Apply a font**: right-click a family or a style in Typeshelf, *Apply in Photoshop*. The font is
+  activated until Typeshelf quits if need be, then set on the selected text, as one undo step.
+- **Preview in your design**: the toolbar button in Typeshelf, or *Preview in Typeshelf* in the
+  panel, shows the selected text in every family with its color and letter spacing (not its size, nor
+  the rest of the artboard). The document only changes with *Apply* or a double-click.
+
+Photoshop applies to whole text layers (the ones selected in the Layers panel), even while editing a
+few characters. Illustrator applies to the highlighted range, or to the whole of each selected text
+object. InDesign, After Effects, Sketch and Figma do not offer this yet.
+
 The panels follow the system language (English, or French on a French system).
 
 | Folder           | Application                       | Technology                    |
@@ -123,7 +135,21 @@ of `system` (installed on the system), `active` (already active), `activated` (a
 request, `source` = `library` or `google`), `missing`, `error`. `scope` is `temporary` (until
 Typeshelf quits, the default) or `persistent`.
 
-Figma's panel uses the same three calls under `/v1/figma/…` (`status`, `fonts/status`,
+A plugin cannot be called, so the panels that can apply a font poll every second:
+
+```http
+POST /v1/bridge/poll       { "document?": "poster.psd", "can": ["apply", "selection"] }
+POST /v1/bridge/result     { "id", "kind", "ok", "error?", "count?", "selection?" }
+POST /v1/bridge/selection  { "selection": { "text", "font?", "size?", "color?", "tracking?", "count" } }
+```
+
+The first answers `{ "commands": [{ "id", "kind": "apply" | "selection", "font?" }] }`; `font` is a
+PostScript name. The second reports on one command, with `error` set to `no_document`,
+`no_selection`, `font_unavailable` or a message. The third is the panel's button. A plugin silent for
+5 seconds counts as closed, and a command it did not pick up within 10 seconds is dropped. All three
+require `X-Typeshelf-Client`.
+
+Figma's panel uses the same three font calls under `/v1/figma/…` (`status`, `fonts/status`,
 `fonts/activate`): its iframe has no origin (`Origin: null`), so these routes answer the CORS preflight
 for that origin only, and every other request must carry `X-Typeshelf-Token`, the token written into
 the installed plugin. Wrong or missing token: `401`.
