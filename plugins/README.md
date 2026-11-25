@@ -4,17 +4,19 @@ Panels that, when a document opens, list the fonts it uses and ask Typeshelf to 
 missing ones: from the library, or downloaded from Google Fonts when the family exists there.
 Typeshelf must be running.
 
-The Photoshop and Illustrator panels also work the other way round, from Typeshelf:
+The Photoshop, Illustrator, After Effects and Sketch plugins also work the other way round, from
+Typeshelf:
 
 - **Apply a font**: right-click a family or a style in Typeshelf, *Apply in Photoshop*. The font is
   activated until Typeshelf quits if need be, then set on the selected text, as one undo step.
 - **Preview in your design**: the toolbar button in Typeshelf, or *Preview in Typeshelf* in the
-  panel, shows the selected text in every family with its color and letter spacing (not its size, nor
+  panel (in Sketch, in **Plugins ▸ Typeshelf**), shows the selected text in every family with its color and letter spacing (not its size, nor
   the rest of the artboard). The document only changes with *Apply* or a double-click.
 
 Photoshop applies to whole text layers (the ones selected in the Layers panel), even while editing a
 few characters. Illustrator applies to the highlighted range, or to the whole of each selected text
-object. InDesign, After Effects, Sketch and Figma do not offer this yet.
+object. After Effects applies to the text layers selected in the active composition (every Source
+Text keyframe of each), Sketch to the selected text layers. InDesign and Figma do not offer this yet.
 
 The panels follow the system language (English, or French on a French system).
 
@@ -106,8 +108,10 @@ ln -s "$PWD/plugins/sketch/Typeshelf.sketchplugin" ~/Library/Application\ Suppor
 
 (or double-click `Typeshelf.sketchplugin`, which copies it). Without a webview library, Sketch has
 no permanent panel: the plugin acts on its own when a document opens and answers with a message at
-the bottom of the window. **Plugins ▸ Typeshelf** offers *Activate Missing Fonts* and *Settings…*
-(automatic activation, Google Fonts, duration).
+the bottom of the window. **Plugins ▸ Typeshelf** offers *Activate Missing Fonts*, *Preview in
+Typeshelf* and *Settings…* (automatic activation, Google Fonts, duration). From Sketch's launch on,
+or from the first document opened after installing, the plugin asks Typeshelf every second whether
+there is something to do.
 
 ### Figma
 
@@ -135,7 +139,7 @@ of `system` (installed on the system), `active` (already active), `activated` (a
 request, `source` = `library` or `google`), `missing`, `error`. `scope` is `temporary` (until
 Typeshelf quits, the default) or `persistent`.
 
-A plugin cannot be called, so the panels that can apply a font poll every second:
+A plugin cannot be called, so the plugins that can apply a font poll every second:
 
 ```http
 POST /v1/bridge/poll       { "document?": "poster.psd", "can": ["apply", "selection"] }
