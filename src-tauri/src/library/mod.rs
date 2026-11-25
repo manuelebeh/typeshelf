@@ -59,6 +59,8 @@ pub struct Session {
     head: PathBuf,
     /// Part of the library has not arrived on this computer yet.
     waiting: bool,
+    /// The files as they were when last read.
+    stamp: journal::Stamp,
 }
 
 impl std::ops::Deref for Session {
@@ -169,11 +171,35 @@ impl Session {
             connected: false,
             head: who.head.to_path_buf(),
             waiting: false,
+            stamp: journal::Stamp::new(),
         })
+    }
+
+    /// Takes in what other computers changed since the last reading. `None` when nothing did,
+    /// else the font files that no entry uses anymore.
+    pub fn sync(&mut self, id: &str) -> R<Option<Vec<String>>> {
+        let Some(stamp) = journal::stamp(&self.root) else {
+            let was_connected = std::mem::replace(&mut self.connected, false);
+            return Ok(was_connected.then(Vec::new));
+        };
+        if self.connected && stamp == self.stamp {
+            return Ok(None);
+        }
+        // Another library may have taken this place, for instance on a drive with the same name.
+        if manifest::read(&self.root)?.id != id {
+            let was_connected = std::mem::replace(&mut self.connected, false);
+            return Ok(was_connected.then(Vec::new));
+        }
+        let before: HashSet<String> = self.db.faces()?.into_iter().map(|f| f.path).collect();
+        self.load()?;
+        let after: HashSet<String> = self.db.faces()?.into_iter().map(|f| f.path).collect();
+        Ok(Some(before.difference(&after).cloned().collect()))
     }
 
     /// Brings the cache up to date with what the journals now hold.
     fn load(&mut self) -> R<()> {
+        // Taken before reading: a change made meanwhile is seen next time.
+        let stamp = journal::stamp(&self.root).unwrap_or_default();
         let manifest = manifest::read(&self.root)?;
         let (events, newer) = merged(&self.root)?;
 
@@ -209,6 +235,7 @@ impl Session {
         self.shared_read_only = manifest.read_only || newer || manifest.format > manifest::FORMAT;
         self.writable = journal::writable(&self.root, &self.device_id);
         self.connected = true;
+        self.stamp = stamp;
         self.db.rebuild(&events, &Here { root: &self.root, device_id: &self.device_id, devices: &self.devices })
     }
 
@@ -259,6 +286,12 @@ impl Session {
         journal::append(&path, &events)?;
         (self.seq, self.clock) = (seq, clock);
         write_head(&self.head, &self.device_id, seq);
+        // Our own writing is not news. Other files keep their old stamp, so nothing is missed.
+        if let (Some(name), Some(mut now)) = (path.file_name().map(|n| n.to_string_lossy().into_owned()), journal::stamp(&self.root)) {
+            if let Some(own) = now.remove(&name) {
+                self.stamp.insert(name, own);
+            }
+        }
         self.devices.insert(self.device_id.clone(), self.device_name.clone());
         self.db.apply(&events, &Here { root: &self.root, device_id: &self.device_id, devices: &self.devices })
     }
@@ -353,7 +386,7 @@ pub fn default_ops(now: i64) -> Vec<Op> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::model::Face;
 
@@ -392,7 +425,7 @@ mod tests {
         }
     }
 
-    pub(super) fn face(id: &str, ps_name: &str) -> Op {
+    pub(crate) fn face(id: &str, ps_name: &str) -> Op {
         let face = Face {
             id: id.into(),
             path: String::new(),

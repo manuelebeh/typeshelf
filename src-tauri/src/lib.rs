@@ -659,6 +659,7 @@ pub fn run() {
                 system_scan(&handle.state::<AppState>());
             });
             plugin_api::start(app.handle().clone());
+            libraries::watch(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -678,6 +679,7 @@ pub fn run() {
             libraries::move_library,
             libraries::forget_library,
             libraries::set_view_only,
+            libraries::sync_library,
             set_starred,
             create_collection,
             rename_collection,

@@ -1,10 +1,13 @@
 //! The change journal: one append-only JSON-lines file per computer in `journal/`. A library is
 //! whatever replaying every journal gives, in the order of the events' hybrid logical clocks.
 
+use super::manifest;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use unicode_normalization::UnicodeNormalization;
 
 pub const FOLDER: &str = "journal";
@@ -225,6 +228,25 @@ pub fn writable(root: &Path, device: &str) -> bool {
 pub fn pending(root: &Path) -> bool {
     fs::read_dir(root.join(FOLDER))
         .is_ok_and(|entries| entries.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".jsonl.icloud")))
+}
+
+/// What the journal folder looks like, cheap enough to compare every few seconds. File
+/// watchers are unreliable on network drives and cloud placeholders. `None` when the library
+/// cannot be reached.
+pub type Stamp = BTreeMap<String, (u64, Option<SystemTime>)>;
+
+pub fn stamp(root: &Path) -> Option<Stamp> {
+    let manifest = fs::metadata(root.join(manifest::FILE)).ok()?;
+    let mut stamp = Stamp::from([(manifest::FILE.to_string(), (manifest.len(), manifest.modified().ok()))]);
+    for entry in fs::read_dir(root.join(FOLDER)).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".jsonl") || name.ends_with(".icloud") {
+            if let Ok(meta) = fs::metadata(entry.path()) {
+                stamp.insert(name, (meta.len(), meta.modified().ok()));
+            }
+        }
+    }
+    Some(stamp)
 }
 
 /// Adds events at the end of a journal and flushes them to the disk.

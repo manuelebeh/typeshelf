@@ -1,11 +1,13 @@
 //! Commands to create, open, switch, move and forget libraries.
 
 use crate::library::{manage, manifest, OpenLibrary};
+use crate::model::Scope;
 use crate::{activation, current, machine, now, AppState, CmdResult};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +118,30 @@ pub fn view_only(state: &AppState, id: &str, view_only: bool) -> CmdResult<()> {
     Ok(())
 }
 
+/// Takes in what other computers changed in the open library. Fonts they removed from it are
+/// deactivated here. Returns whether anything changed.
+pub fn sync(state: &AppState, os: &activation::Activator) -> CmdResult<bool> {
+    let open = current(state);
+    let mut session = open.lock();
+    let Some(gone) = session.sync(&open.id)? else {
+        return Ok(false);
+    };
+    let machine = machine(state);
+    machine.set_device(&open.id, session.device_id())?;
+    for path in gone {
+        let scope = machine.scope_of(&path)?;
+        if scope == Scope::None || session.path_in_use(&path)? {
+            continue;
+        }
+        match (os.off)(Path::new(&path), scope) {
+            Ok(()) => machine.set_scope(&path, Scope::None)?,
+            Err(e) => eprintln!("{e}"),
+        }
+    }
+    activation::finish_batch();
+    Ok(true)
+}
+
 /// Runs a library change off the main thread: it reads or copies a whole folder.
 async fn blocking<T: Send + 'static>(app: AppHandle, work: impl FnOnce(&AppState) -> CmdResult<T> + Send + 'static) -> CmdResult<T> {
     tauri::async_runtime::spawn_blocking(move || work(&app.state::<AppState>())).await.map_err(|e| e.to_string())?
@@ -152,6 +178,23 @@ pub fn set_view_only(state: State<AppState>, id: String, enabled: bool) -> CmdRe
 }
 
 #[tauri::command]
+pub async fn sync_library(app: AppHandle) -> CmdResult<bool> {
+    blocking(app, |state| sync(state, &activation::Activator::SYSTEM)).await
+}
+
+/// Looks for changes from other computers every few seconds and tells the interface.
+pub fn watch(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(10));
+        match sync(&app.state::<AppState>(), &activation::Activator::SYSTEM) {
+            Ok(true) => drop(app.emit("library-changed", ())),
+            Ok(false) => {}
+            Err(e) => eprintln!("{e}"),
+        }
+    });
+}
+
+#[tauri::command]
 pub fn forget_library(state: State<AppState>, id: String) -> CmdResult<()> {
     forget(&state, &id)
 }
@@ -159,7 +202,43 @@ pub fn forget_library(state: State<AppState>, id: String) -> CmdResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Scope;
+    use crate::library::journal::{self, Clock, Event, Op};
+    use crate::library::tests::face;
+    use std::cell::RefCell;
+
+    #[test]
+    fn remote_changes_are_picked_up_and_removed_fonts_deactivated() {
+        let data = std::env::temp_dir().join(format!("typeshelf-sync-{}", uuid::Uuid::new_v4()));
+        let state = AppState::for_tests(&data);
+        let open = current(&state);
+        open.lock().commit(vec![face("f", "Inter-Regular")]).unwrap();
+        let path = open.lock().faces().unwrap()[0].path.clone();
+        machine(&state).set_scope(&path, Scope::Persistent).unwrap();
+
+        let calls = RefCell::new(Vec::new());
+        let off = |p: &Path, _: Scope| {
+            calls.borrow_mut().push(p.to_string_lossy().into_owned());
+            Ok(())
+        };
+        let os = activation::Activator { on: &|_, _| Ok(()), off: &off };
+        assert!(!sync(&state, &os).unwrap(), "our own changes are not news");
+
+        let remote = Event { dev: "other".into(), seq: 1, t: Clock(u64::MAX / 2, 0), op: Op::FaceRemove { ids: vec!["f".into()] } };
+        journal::append(&journal::path_for(&open.root, "other"), &[remote]).unwrap();
+        assert!(sync(&state, &os).unwrap());
+        assert!(open.lock().faces().unwrap().is_empty());
+        assert_eq!(calls.borrow().as_slice(), std::slice::from_ref(&path));
+        assert_eq!(machine(&state).scope_of(&path).unwrap(), Scope::None);
+        assert!(!sync(&state, &os).unwrap());
+
+        // Unplugged, then back.
+        std::fs::rename(&open.root, data.join("away")).unwrap();
+        assert!(sync(&state, &os).unwrap() && open.lock().read_only());
+        assert!(!sync(&state, &os).unwrap());
+        std::fs::rename(data.join("away"), &open.root).unwrap();
+        assert!(sync(&state, &os).unwrap() && !open.lock().read_only());
+        let _ = std::fs::remove_dir_all(data);
+    }
 
     #[test]
     fn activation_survives_switching_libraries() {
