@@ -8,7 +8,7 @@ mod plugin_api;
 mod plugin_install;
 
 use db::Db;
-use model::{Face, FaceDetails, ImportSummary, Library, Scope, Tag};
+use model::{Face, FaceDetails, ImportSummary, Library, Scope, SmartSet, Tag};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,6 +92,7 @@ fn library_blocking(state: &AppState) -> CmdResult<Library> {
         membership: db.membership()?,
         tags: db.tags()?,
         tag_membership: db.tag_membership()?,
+        smart_sets: db.smart_sets()?,
         activation: db.activation()?,
         fonts_dir: state.fonts_dir.to_string_lossy().into_owned(),
     })
@@ -360,6 +361,35 @@ fn set_tagged(state: State<AppState>, id: String, families: Vec<String>, tagged:
     db.set_tagged(&id, &ids, tagged)
 }
 
+// ---------------------------------------------------------------- smart sets
+
+fn validate_smart_set(name: &str, query: &str) -> CmdResult<()> {
+    if name.trim().is_empty() {
+        return Err("The name cannot be empty".into());
+    }
+    serde_json::from_str::<serde_json::Value>(query).map_err(|e| format!("Invalid query: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn create_smart_set(state: State<AppState>, name: String, query: String) -> CmdResult<String> {
+    validate_smart_set(&name, &query)?;
+    let set = SmartSet { id: uuid::Uuid::new_v4().to_string(), name: name.trim().into(), query, created_at: now() };
+    lock(&state).create_smart_set(&set)?;
+    Ok(set.id)
+}
+
+#[tauri::command]
+fn update_smart_set(state: State<AppState>, id: String, name: String, query: String) -> CmdResult<()> {
+    validate_smart_set(&name, &query)?;
+    lock(&state).update_smart_set(&id, name.trim(), &query)
+}
+
+#[tauri::command]
+fn delete_smart_set(state: State<AppState>, id: String) -> CmdResult<()> {
+    lock(&state).delete_smart_set(&id)
+}
+
 // ---------------------------------------------------------------- details
 
 #[tauri::command]
@@ -517,6 +547,9 @@ pub fn run() {
             update_tag,
             delete_tag,
             set_tagged,
+            create_smart_set,
+            update_smart_set,
+            delete_smart_set,
             face_details,
             language_support,
             google_catalog,
@@ -589,6 +622,23 @@ mod tests {
         assert_eq!((face.width, face.features.len()), (5, 0));
         drop(db);
         assert_eq!(Db::open(&path).unwrap().faces().unwrap().len(), 1);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saves_renames_and_deletes_smart_sets() {
+        let path = std::env::temp_dir().join(format!("typeshelf-sets-{}.sqlite", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).unwrap();
+        let set = SmartSet { id: "s1".into(), name: "Bold".into(), query: "{}".into(), created_at: 1 };
+        db.create_smart_set(&set).unwrap();
+        db.update_smart_set("s1", "Heavy", r#"{"search":"x"}"#).unwrap();
+        let sets = db.smart_sets().unwrap();
+        assert_eq!((sets[0].name.as_str(), sets[0].query.as_str()), ("Heavy", r#"{"search":"x"}"#));
+        assert!(db.update_smart_set("missing", "x", "{}").is_err());
+        db.delete_smart_set("s1").unwrap();
+        assert!(db.smart_sets().unwrap().is_empty());
+        assert!(validate_smart_set(" ", "{}").is_err());
+        assert!(validate_smart_set("x", "{not json").is_err());
         let _ = fs::remove_file(&path);
     }
 

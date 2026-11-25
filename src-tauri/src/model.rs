@@ -51,6 +51,16 @@ pub struct Collection {
     pub created_at: i64,
 }
 
+/// A saved search: its `query` (JSON, evaluated by the interface) picks the families.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartSet {
+    pub id: String,
+    pub name: String,
+    pub query: String,
+    pub created_at: i64,
+}
+
 /// How a font file is made available to other applications.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -91,6 +101,7 @@ pub struct Library {
     pub tags: Vec<Tag>,
     /// manual tag id → face ids
     pub tag_membership: HashMap<String, Vec<String>>,
+    pub smart_sets: Vec<SmartSet>,
     /// file path → activation scope (only active files are listed)
     pub activation: HashMap<String, Scope>,
     pub fonts_dir: String,

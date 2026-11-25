@@ -1,5 +1,5 @@
 use crate::fonts;
-use crate::model::{Collection, Face, Scope, Tag};
+use crate::model::{Collection, Face, Scope, SmartSet, Tag};
 use rusqlite::{params, Connection, Row};
 use std::collections::HashMap;
 use std::path::Path;
@@ -88,6 +88,12 @@ impl Db {
                     "BEGIN;
                      ALTER TABLE face ADD COLUMN width INTEGER NOT NULL DEFAULT 5;
                      ALTER TABLE face ADD COLUMN features TEXT;
+                     CREATE TABLE smart_set (
+                         id TEXT PRIMARY KEY,
+                         name TEXT NOT NULL,
+                         query TEXT NOT NULL,
+                         created_at INTEGER NOT NULL
+                     );
                      PRAGMA user_version = 2;
                      COMMIT;",
                 )
@@ -365,6 +371,39 @@ impl Db {
             .map_err(err)?;
         }
         tx.commit().map_err(err)
+    }
+
+    // ---- Smart sets ----
+
+    pub fn smart_sets(&self) -> R<Vec<SmartSet>> {
+        let mut stmt = self.conn.prepare("SELECT id, name, query, created_at FROM smart_set ORDER BY name COLLATE NOCASE").map_err(err)?;
+        let rows = stmt
+            .query_map([], |r| Ok(SmartSet { id: r.get(0)?, name: r.get(1)?, query: r.get(2)?, created_at: r.get(3)? }))
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    pub fn create_smart_set(&self, set: &SmartSet) -> R<()> {
+        self.conn
+            .execute(
+                "INSERT INTO smart_set (id, name, query, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![set.id, set.name, set.query, set.created_at],
+            )
+            .map(|_| ())
+            .map_err(err)
+    }
+
+    pub fn update_smart_set(&self, id: &str, name: &str, query: &str) -> R<()> {
+        let changed =
+            self.conn.execute("UPDATE smart_set SET name = ?1, query = ?2 WHERE id = ?3", params![name, query, id]).map_err(err)?;
+        if changed == 0 {
+            return Err("Smart set not found".into());
+        }
+        Ok(())
+    }
+
+    pub fn delete_smart_set(&self, id: &str) -> R<()> {
+        self.conn.execute("DELETE FROM smart_set WHERE id = ?1", [id]).map(|_| ()).map_err(err)
     }
 
     // ---- Activation ----
