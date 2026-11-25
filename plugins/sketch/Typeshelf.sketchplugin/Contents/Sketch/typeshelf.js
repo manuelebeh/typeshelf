@@ -261,6 +261,23 @@ function covers(font, text) {
   });
 }
 
+/**
+ * Changes the font of a whole layer, run of text by run: setFontPostscriptName would give all of
+ * them the size of the first.
+ */
+function setFont(native, name) {
+  var text = native.attributedStringValue();
+  var length = Number(text.length());
+  for (var i = 0; i < length; ) {
+    var range = MOPointer.alloc().init();
+    var old = text.attribute_atIndex_effectiveRange(NSFontAttributeName, i, range);
+    var run = range.value();
+    var end = Math.max(Number(run.location) + Number(run.length), i + 1);
+    native.addAttribute_value_forRange(NSFontAttributeName, NSFont.fontWithName_size(name, old.pointSize()), NSMakeRange(i, end - i));
+    i = end;
+  }
+}
+
 /** Sets the font of whole layers; everything done at once is one undo step. */
 function applyFont(name) {
   var found = selectedText();
@@ -272,12 +289,13 @@ function applyFont(name) {
     return !covers(font, layer.text);
   });
   if (refused) return { ok: false, error: "font_refused" };
+  // Names the entry of the Undo menu; Sketch records the history by itself.
+  var history = found.document.sketchObject.historyMaker();
+  if (history.respondsToSelector(NSSelectorFromString("registerHistoryMomentTitle:"))) history.registerHistoryMomentTitle("Typeshelf");
   found.layers.forEach(function (layer) {
-    layer.sketchObject.setFontPostscriptName(name);
+    setFont(layer.sketchObject, name);
     layer.sketchObject.adjustFrameToFit();
   });
-  var history = found.document.sketchObject.historyMaker();
-  if (history) history.commitHistoryWithTitle("Typeshelf");
   return { ok: true, count: found.layers.length };
 }
 
