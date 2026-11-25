@@ -2582,12 +2582,27 @@ function wire() {
       state.expanded.has(fam.key) ? state.expanded.delete(fam.key) : state.expanded.add(fam.key);
       return renderList();
     }
+    if (e.detail === 1 && designActive()) designClick = { family: fam.key, face: row.dataset.face };
     selectFamily(fam.key, row.dataset.face ?? null);
   });
+  // "Preview in your design" applies on double-click. The first click may open the details and
+  // move the cards, so the second one acts on what the first one chose, wherever it lands.
+  let designClick: { family: string; face?: string } | null = null;
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (e.detail === 1) designClick = null;
+      if (e.detail !== 2 || !designClick || !designActive()) return;
+      e.stopPropagation();
+      e.preventDefault();
+      void applyToDesign(designClick.family, designClick.face);
+      designClick = null;
+    },
+    true,
+  );
   list.addEventListener("dblclick", (e) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>("[data-family]");
-    if (!row || (e.target as HTMLElement).closest("button")) return;
-    if (designActive()) return void applyToDesign(row.dataset.family!, row.dataset.face);
+    if (!row || (e.target as HTMLElement).closest("button") || designActive()) return;
     settings.inspector = true;
     selectFamily(row.dataset.family!);
   });
