@@ -1,8 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type DuplicateCopy, type DuplicateGroup, type Insights, type Library, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type SmartSet, type Tag } from "./api";
+import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type DuplicateCopy, type DuplicateGroup, type Insights, type Library, type LibraryInfo, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type SmartSet, type Tag } from "./api";
 import {
   categoryLabel,
   classOf,
@@ -59,7 +59,7 @@ interface Family {
   classification: string;
 }
 
-type Activation = "inactive" | "temporary" | "persistent" | "mixed" | "system";
+type Activation = "inactive" | "temporary" | "persistent" | "mixed" | "system" | "missing";
 type Tab = "specimen" | "styles" | "glyphs" | "languages" | "features" | "axes" | "info";
 type Sort = "name" | "name-desc" | "recent" | "styles";
 type Theme = "auto" | "light" | "dark";
@@ -126,6 +126,7 @@ const DEFAULT_ON = new Set(["liga", "calt", "kern", "ccmp", "locl", "mark", "mkm
 
 const state = {
   lib: null as Library | null,
+  libraries: [] as LibraryInfo[],
   systemFaces: [] as Face[],
   systemPaths: new Set<string>(),
   systemLoading: true,
@@ -274,12 +275,16 @@ const fontSheet = (() => {
 })();
 const registered = new Set<string>();
 
+/** The id the backend knows the font file of a face by. */
+const fileId = (face: Face) => face.previewId ?? face.id;
+
 /** Lazily declares an @font-face for a face and returns its CSS family name. */
 function cssFont(face: Face): string {
-  const name = `ts-${face.id}`;
-  if (!registered.has(face.id)) {
-    registered.add(face.id);
-    fontSheet.insertRule(`@font-face { font-family: "${name}"; src: url("${fontURL(face.id)}"); font-display: swap; }`);
+  const library = state.lib?.id ?? "";
+  const name = `ts-${library}-${fileId(face)}`;
+  if (!registered.has(name)) {
+    registered.add(name);
+    fontSheet.insertRule(`@font-face { font-family: "${name}"; src: url("${fontURL(library, fileId(face))}"); font-display: swap; }`);
   }
   // Single quotes: this value is embedded in double-quoted style="" attributes.
   return `'${name}', sans-serif`;
@@ -289,7 +294,12 @@ function cssFont(face: Face): string {
 
 /** Library faces plus installed fonts not yet recorded in the library, grouped by family. */
 function rebuild() {
-  const lib = state.lib?.faces ?? [];
+  // A library file that is not on this computer shows the installed copy of the same font.
+  const installed = new Map(state.systemFaces.map((f) => [f.psName, f]));
+  const lib = (state.lib?.faces ?? []).map((f) => {
+    const copy = f.available ? undefined : installed.get(f.psName);
+    return copy ? { ...f, path: copy.path, available: true, previewId: copy.id } : f;
+  });
   const known = new Set(lib.map((f) => f.psName));
   const faces = [...lib, ...state.systemFaces.filter((f) => !known.has(f.psName))];
   const groups = new Map<string, Face[]>();
@@ -311,7 +321,7 @@ function rebuild() {
         inLibrary: faces.some((f) => !isSystemFace(f)),
         faces,
         rep,
-        paths: [...new Set(faces.map((f) => f.path))],
+        paths: [...new Set(faces.filter((f) => f.available).map((f) => f.path))],
         starred: faces.some((f) => f.starred),
         variable: faces.some((f) => f.variable),
         classification: rep.classification,
@@ -328,6 +338,7 @@ function rebuild() {
 }
 
 function activation(family: Family): Activation {
+  if (!family.paths.length) return "missing";
   const own = family.paths.filter((p) => !state.systemPaths.has(p));
   if (!own.length) return "system";
   const scopes = own.map((p) => state.lib?.activation[p] ?? "none");
@@ -343,9 +354,16 @@ const activationLabels = (): Record<Activation, string> => ({
   persistent: t("Active (permanent)"),
   mixed: t("Partially active"),
   system: t("Always active (installed on the system)"),
+  missing: t("Not available on this computer"),
 });
 
-const isActive = (f: Family) => activation(f) !== "inactive";
+/** What to say about a family whose files are all elsewhere. */
+function missingLabel(fam: Family): string {
+  const device = fam.faces.find((f) => f.importedOn)?.importedOn;
+  return device ? `${activationLabels().missing} · ${t("Imported on {device}", { device })}` : activationLabels().missing;
+}
+
+const isActive = (f: Family) => !["inactive", "missing"].includes(activation(f));
 const addedAt = (f: Family) => Math.max(...f.faces.map((x) => x.addedAt));
 
 function matches(family: Family, key: string): boolean {
@@ -717,7 +735,7 @@ const sizeOf = (bytes: number) =>
 
 async function reload() {
   try {
-    state.lib = await api.loadLibrary();
+    [state.lib, state.libraries] = await Promise.all([api.loadLibrary(), api.listLibraries()]);
   } catch (e) {
     toast(String(e), true);
     return;
@@ -785,7 +803,10 @@ async function libraryAction(families: Family[], action: () => Promise<unknown>,
 
 const setScope = (families: Family[], scope: Scope) => {
   const paths = families.flatMap((f) => f.paths).filter((p) => !state.systemPaths.has(p));
-  if (!paths.length) return toast(t("System fonts are always active."));
+  if (!paths.length) {
+    const missing = families.every((f) => !f.paths.length);
+    return toast(missing ? activationLabels().missing : t("System fonts are always active."));
+  }
   return run(api.setActivation(paths, scope));
 };
 
@@ -941,6 +962,97 @@ function tagChip(tag: Tag) {
   return `<span class="chip" style="--c:${tagColor(tag.color)}" title="${esc(tag.name)}">${esc(tag.name)}</span>`;
 }
 
+// ------------------------------------------------------------------ libraries
+
+/** Forgets what was on screen for the library that was open. */
+async function showOpenedLibrary() {
+  state.sidebar = "all";
+  state.selected = null;
+  state.faceId = null;
+  state.insights = null;
+  state.insightsSelected.clear();
+  state.details.clear();
+  state.languages.clear();
+  await reload();
+  $("#family-list").scrollTop = 0;
+}
+
+/** Runs a library change, then shows whichever library is open after it. */
+async function libraryChange(change: () => Promise<unknown>, success?: string) {
+  const before = state.lib?.id;
+  try {
+    await change();
+    if (success) toast(success);
+  } catch (e) {
+    toast(String(e), true);
+  }
+  const [lib, libraries] = await Promise.all([api.loadLibrary(), api.listLibraries()]);
+  if (lib.id !== before) return showOpenedLibrary();
+  state.libraries = libraries;
+  await reload();
+}
+
+async function newLibrary() {
+  const path = await save({ title: t("New library"), defaultPath: `${t("My library")}.typeshelf` });
+  if (path) await libraryChange(() => api.createLibrary(path));
+}
+
+async function openLibraryPath(path: string) {
+  await libraryChange(async () => {
+    const { duplicateOf } = await api.openLibrary(path, false);
+    if (!duplicateOf) return;
+    const ok = await ask(t("This folder is a copy of the library at {path}. Open it as a separate library?", { path: duplicateOf }), {
+      title: t("Open library"),
+      okLabel: t("Open as a separate library"),
+      cancelLabel: t("Cancel"),
+    });
+    if (ok) await api.openLibrary(path, true);
+  });
+}
+
+async function openLibraryDialog() {
+  // A .typeshelf folder acts as a file on macOS; elsewhere, the file inside it is picked.
+  const path = await open({ title: t("Open library"), filters: [{ name: t("Typeshelf libraries"), extensions: ["typeshelf", "tslibrary"] }] });
+  if (typeof path === "string") await openLibraryPath(path);
+}
+
+async function moveLibrary(library: LibraryInfo) {
+  const parent = await open({ directory: true, title: t("Choose where to put the library") });
+  if (typeof parent !== "string") return;
+  toast(t("Moving the library…"), false, 600_000);
+  await libraryChange(() => api.moveLibrary(library.id, parent), t("Library moved"));
+}
+
+function libraryMenu(): (MenuItem | "-")[] {
+  const mac = /Mac/.test(navigator.userAgent);
+  const current = state.libraries.find((l) => l.current);
+  const items: (MenuItem | "-")[] = state.libraries.map((l) => ({
+    label: `${l.current ? "✓" : "  "} ${l.name}${l.connected ? "" : ` (${t("Not connected")})`}`,
+    action: () => {
+      if (!l.current && l.connected) libraryChange(() => api.switchLibrary(l.id));
+      else if (!l.current) openLibraryDialog(); // find where it went
+    },
+  }));
+  items.push("-", { label: t("New library…"), action: newLibrary }, { label: t("Open library…"), action: openLibraryDialog });
+  if (current) {
+    items.push(
+      "-",
+      { label: mac ? t("Show in Finder") : t("Show in folder"), action: () => revealItemInDir(current.path).catch((e) => toast(String(e), true)) },
+      { label: t("Move the library…"), action: () => moveLibrary(current) },
+    );
+  }
+  const gone = state.libraries.filter((l) => !l.current && !l.connected);
+  for (const l of gone) {
+    items.push({ label: t("Remove “{name}” from this list", { name: l.name }), action: () => libraryChange(() => api.forgetLibrary(l.id)) });
+  }
+  return items;
+}
+
+/** Libraries double-clicked in the file manager. */
+async function openPending() {
+  for (const path of await api.takePendingOpen()) await openLibraryPath(path);
+}
+
 // ------------------------------------------------------------------ rendering: sidebar
 
 function render() {
@@ -950,6 +1062,10 @@ function render() {
 }
 
 function renderSidebar() {
+  $("#library-name").textContent = state.lib?.name ?? "";
+  const status = $("#library-status");
+  status.hidden = !state.lib?.readOnly;
+  status.textContent = state.lib?.readOnly ? t("View only") : "";
   const count = (key: string): number | string => {
     if (key === "insights") return state.insights?.groups.length || "";
     if (key === "google") return state.google ? googleBase().length : state.googleLoading ? "…" : "";
@@ -1503,6 +1619,7 @@ function insightsClick(target: HTMLElement) {
 }
 
 function statusControl(fam: Family, act = activation(fam)) {
+  if (act === "missing") return `<span class="lock" title="${esc(missingLabel(fam))}">${icon("inactive", 13)}</span>`;
   return act === "system"
     ? `<span class="lock" title="${esc(activationLabels().system)}">${icon("lock", 13)}</span>`
     : `<button class="switch${act !== "inactive" ? " on" : ""} ${act}" data-action="toggle" role="switch" aria-checked="${act !== "inactive"}" title="${esc(activationLabels()[act])}"><span></span></button>`;
@@ -1514,9 +1631,9 @@ function starButton(fam: Family) {
 
 function renderCard(fam: Family): string {
   const act = activation(fam);
-  return `<div class="font-card${fam.key === state.selected ? " selected" : ""}" data-family="${esc(fam.key)}" draggable="true">
+  return `<div class="font-card${fam.key === state.selected ? " selected" : ""}${act === "missing" ? " missing" : ""}" data-family="${esc(fam.key)}" draggable="true">
     <div class="card-head">
-      <span class="dot ${act}" title="${esc(activationLabels()[act])}"></span>
+      <span class="dot ${act}" title="${esc(act === "missing" ? missingLabel(fam) : activationLabels()[act])}"></span>
       <span class="card-name">${esc(fam.name)}</span>
       <span class="card-meta">· ${tn(fam.faces.length, "{n} style", "{n} styles")}</span>
       ${fam.variable ? `<span class="pill">VAR</span>` : ""}
@@ -1542,7 +1659,7 @@ function renderTable(families: Family[]): string {
     const act = activation(fam);
     const open = state.expanded.has(fam.key);
     const many = fam.faces.length > 1;
-    const row = `<div class="t-row${fam.key === state.selected ? " selected" : ""}" data-family="${esc(fam.key)}" draggable="true">
+    const row = `<div class="t-row${fam.key === state.selected ? " selected" : ""}${act === "missing" ? " missing" : ""}" data-family="${esc(fam.key)}" draggable="true">
       <span>${many ? `<button class="chevron${open ? " open" : ""}" data-action="expand" aria-label="${esc(t("Show the styles"))}">${icon("chevron", 14)}</button>` : ""}</span>
       <span class="dot ${act}" title="${esc(activationLabels()[act])}"></span>
       <span class="t-preview" style="font-family:${cssFont(fam.rep)}">${esc(state.previewText || fam.name)}</span>
@@ -1602,6 +1719,7 @@ function currentFace(fam: Family): Face {
 
 function renderDetail() {
   const pane = $("#detail");
+  pane.classList.remove("missing");
   $("#inspector-button").classList.toggle("on", settings.inspector);
   if (isInsights()) {
     pane.hidden = true;
@@ -1624,6 +1742,8 @@ function renderDetail() {
   if (state.tab === "axes" && !fam.variable) state.tab = "specimen";
   const face = currentFace(fam);
   const act = activation(fam);
+  pane.classList.toggle("missing", act === "missing");
+  const needsFile = state.tab !== "specimen" && state.tab !== "styles";
   const tabs: [Tab, string][] = [
     ["specimen", t("Specimen")],
     ["styles", t("Styles")],
@@ -1656,8 +1776,8 @@ function renderDetail() {
       <div class="hero" style="font-family:${cssFont(face)}">Aa</div>
       <div class="status-line">
         ${
-          act === "system"
-            ? `<span class="dot system"></span><span>${activationLabels().system}</span>`
+          act === "system" || act === "missing"
+            ? `<span class="dot ${act}"></span><span>${esc(act === "missing" ? missingLabel(fam) : activationLabels().system)}</span>`
             : `<div class="segmented" title="${esc(activationLabels()[act])}">
                 ${scopeButton("none", t("Off"), act === "inactive")}
                 ${scopeButton("temporary", t("Session"), act === "temporary")}
@@ -1675,16 +1795,21 @@ function renderDetail() {
         ${tabs.map(([t, l]) => `<button data-tab="${t}" class="${state.tab === t ? "on" : ""}">${l}</button>`).join("")}
       </nav>
     </header>
-    <div class="detail-body">${renderTab(fam, face)}</div>`;
+    <div class="detail-body">${
+      !face.available && needsFile
+        ? emptyNote("Aa", activationLabels().missing, t("The font file is needed to show this."))
+        : renderTab(fam, face)
+    }</div>`;
 
   const needsDetails = state.tab === "glyphs" || state.tab === "features" || state.tab === "axes" || state.tab === "info";
-  if (needsDetails && !state.details.has(face.id)) loadDetails(face.id);
-  if (state.tab === "languages" && !state.languages.has(face.id)) loadLanguages(face.id);
+  if (!face.available) return;
+  if (needsDetails && !state.details.has(face.id)) loadDetails(face);
+  if (state.tab === "languages" && !state.languages.has(face.id)) loadLanguages(face);
 }
 
-async function loadDetails(id: string) {
+async function loadDetails(face: Face) {
   try {
-    state.details.set(id, await api.faceDetails(id));
+    state.details.set(face.id, await api.faceDetails(fileId(face)));
   } catch (e) {
     toast(String(e), true);
     return;
@@ -1692,9 +1817,9 @@ async function loadDetails(id: string) {
   renderDetail();
 }
 
-async function loadLanguages(id: string) {
+async function loadLanguages(face: Face) {
   try {
-    state.languages.set(id, await api.languageSupport(id, LANGUAGES.map((l) => l.sample)));
+    state.languages.set(face.id, await api.languageSupport(fileId(face), LANGUAGES.map((l) => l.sample)));
   } catch (e) {
     toast(String(e), true);
     return;
@@ -1941,7 +2066,7 @@ function familyMenu(families: Family[]): (MenuItem | "-")[] {
   const first = families[0];
   const names = families.map((f) => f.name);
   const items: (MenuItem | "-")[] = [];
-  if (!first.system) {
+  if (!first.system && first.paths.length) {
     items.push(
       { label: t("Activate"), action: () => setScope(families, "persistent") },
       { label: t("Activate temporarily"), action: () => setScope(families, "temporary") },
@@ -1967,7 +2092,9 @@ function familyMenu(families: Family[]): (MenuItem | "-")[] {
   }
   items.push("-");
   if (first.system) items.push({ label: t("Copy the file into the library"), action: () => copyToLibrary(families) });
-  items.push({ label: t("Show in folder"), action: () => revealItemInDir(first.rep.path).catch((e) => toast(String(e), true)) });
+  if (first.paths.length) {
+    items.push({ label: t("Show in folder"), action: () => revealItemInDir(first.paths[0]).catch((e) => toast(String(e), true)) });
+  }
   if (first.inLibrary) {
     items.push(
       first.system
@@ -2090,6 +2217,8 @@ function applyGoogleFilter(name: string, value: string) {
 
 function wire() {
   const sidebar = $("#sidebar");
+  $("#library-button").insertAdjacentHTML("beforeend", icon("chevron", 14));
+  $("#library-button").addEventListener("click", (e) => menuBelow(e.currentTarget as HTMLElement, libraryMenu()));
   sidebar.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     if (target.closest("#new-collection")) return void newCollection();
@@ -2479,7 +2608,7 @@ function wire() {
     $<HTMLSelectElement>("#setting-language").value = settings.language;
     $<HTMLInputElement>("#setting-copy").checked = settings.copyOnImport;
     $<HTMLInputElement>("#setting-inspector").checked = settings.inspector;
-    $("#library-path").textContent = state.lib?.fontsDir ?? "";
+    $("#library-path").textContent = state.lib?.root ?? "";
     $<HTMLInputElement>("#setting-google").checked = settings.google;
     $<HTMLInputElement>("#setting-google-cjk").checked = settings.googleCjk;
     $<HTMLInputElement>("#setting-plugins").checked = settings.plugins;
@@ -2550,17 +2679,17 @@ function wire() {
     configurePlugins();
   });
   $("#reveal-library").addEventListener("click", () => {
-    if (state.lib) revealItemInDir(state.lib.fontsDir).catch((e) => toast(String(e), true));
+    if (state.lib) revealItemInDir(state.lib.root).catch((e) => toast(String(e), true));
   });
   $("#deactivate-all").addEventListener("click", () => {
     settingsDialog.close();
-    setScope(state.families, "none");
+    run(api.deactivateAll());
   });
 
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     target.closest("[data-close]")?.closest("dialog")?.close("cancel");
-    if (!target.closest("#menu, #import-button, #sort-button, #new-tag, [data-action='more'], [data-action='tags'], [data-insights='select']")) hideMenu();
+    if (!target.closest("#menu, #library-button, #import-button, #sort-button, #new-tag, [data-action='more'], [data-action='tags'], [data-insights='select']")) hideMenu();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -2624,6 +2753,10 @@ async function start() {
   await reload();
   loadSystemFonts();
   configurePlugins();
+  listen("open-library", () => openPending()).catch(() => {
+    /* not running inside Tauri */
+  });
+  openPending().catch((e) => toast(String(e), true));
   listen<PluginActivity>("plugin-activity", (e) => onPluginActivity(e.payload)).catch(() => {
     /* not running inside Tauri */
   });

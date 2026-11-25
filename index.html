@@ -10,6 +10,12 @@
     <div class="app">
       <aside class="sidebar" id="sidebar">
         <div class="titlebar-space" data-tauri-drag-region></div>
+        <div class="library-switcher">
+          <button id="library-button" type="button" aria-haspopup="menu" title="Libraries" data-i18n-attr="title">
+            <span id="library-name"></span>
+          </button>
+          <p id="library-status" class="muted small" hidden></p>
+        </div>
         <nav id="sidebar-nav" class="sidebar-nav"></nav>
         <footer class="sidebar-foot">
           <button id="settings-button" class="nav-item" type="button" data-icon="gear">

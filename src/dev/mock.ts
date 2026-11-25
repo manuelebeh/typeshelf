@@ -3,7 +3,7 @@
  * is opened in a regular browser. It never ships: main.ts loads it only in dev mode
  * outside Tauri. Previews use fonts bundled with macOS.
  */
-import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, SmartSet, Tag } from "../api";
+import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, LibraryInfo, PluginInstallState, Scope, SmartSet, Tag } from "../api";
 
 const SUP = "/System/Library/Fonts/Supplemental";
 let n = 0;
@@ -30,6 +30,8 @@ const face = (path: string, family: string, style: string, extra: Partial<Face> 
   features: ["kern", "liga"],
   starred: false,
   addedAt: Date.now() / 1000 - 3600,
+  available: true,
+  importedOn: null,
   ...extra,
 });
 
@@ -40,6 +42,7 @@ const faces: Face[] = [
   face(`${SUP}/Courier New.ttf`, "Courier New", "Regular", { mono: true, classification: "mono" }),
   face(`${SUP}/Skia.ttf`, "Skia", "Regular", { variable: true, classification: "sans", starred: true, features: ["kern", "liga", "smcp", "ss01", "tnum"] }),
   face(`${SUP}/Trebuchet MS.ttf`, "Trebuchet MS", "Regular", { classification: "sans" }),
+  face("/Volumes/Studio/Brand Grotesk.otf", "Brand Grotesk", "Regular", { classification: "sans", available: false, importedOn: "Studio iMac" }),
   face(`${SUP}/Zapfino.ttf`, "Zapfino", "Regular", { classification: "script", addedAt: 0, width: 7, features: ["calt", "kern", "liga", "salt", "swsh"] }),
 ];
 
@@ -191,6 +194,16 @@ const insights = (): Insights => ({
   extraBytes: duplicates.reduce((sum, g) => sum + g.copies.slice(1).reduce((s, c) => s + c.fileSize, 0), 0),
 });
 
+// The commands below keep working on one set of data: switching swaps what load_library answers.
+const libraries: LibraryInfo[] = [
+  { id: "main", name: "Typeshelf", path: "/Users/demo/Typeshelf.typeshelf", current: true, connected: true },
+  { id: "team", name: "Team Fonts", path: "/Volumes/Studio/Team Fonts.typeshelf", current: false, connected: false },
+];
+const shelves = new Map<string, Pick<Library, "faces" | "collections" | "membership" | "tags" | "tagMembership" | "smartSets">>([
+  ["main", { faces, collections, membership, tags, tagMembership, smartSets }],
+]);
+const show = (id: string) => libraries.forEach((l) => (l.current = l.id === id));
+
 const commands: Record<string, (a: any) => unknown> = {
   insights,
   trash_copies: ({ paths }: { paths: string[] }) => {
@@ -232,7 +245,29 @@ const commands: Record<string, (a: any) => unknown> = {
     faces.push(...added);
     return { summary: { imported: added.length, skipped: 0, failures: [] }, paths: added.map((f) => f.path) };
   },
-  load_library: (): Library => ({ faces, collections, membership, tags, tagMembership, smartSets, activation, fontsDir: "~/Typeshelf/Fonts" }),
+  load_library: (): Library => {
+    const current = libraries.find((l) => l.current)!;
+    const content = shelves.get(current.id)!;
+    return { id: current.id, name: current.name, root: current.path, readOnly: false, ...content, activation, fontsDir: `${current.path}/Fonts` };
+  },
+  list_libraries: () => libraries,
+  create_library: ({ path }: { path: string }) => {
+    const name = path.replace(/^.*\//, "").replace(/\.typeshelf$/, "");
+    const id = `lib${libraries.length + 1}`;
+    shelves.set(id, { faces: [], collections: [], membership: {}, tags: [], tagMembership: {}, smartSets: [] });
+    libraries.push({ id, name, path, current: false, connected: true });
+    show(id);
+  },
+  open_library: () => ({ duplicateOf: null }),
+  switch_library: ({ id }: { id: string }) => show(id),
+  move_library: ({ id, parent }: { id: string; parent: string }) =>
+    libraries.filter((l) => l.id === id).forEach((l) => (l.path = `${parent}/${l.name}.typeshelf`)),
+  forget_library: ({ id }: { id: string }) => void libraries.splice(libraries.findIndex((l) => l.id === id), 1),
+  take_pending_open: () => [],
+  deactivate_all: () => {
+    for (const path of Object.keys(activation)) delete activation[path];
+    return [];
+  },
   system_fonts: () => systemFaces,
   // Referencing installed fonts (favourite, tag, collection) records them in the library.
   import_paths: ({ paths }: { paths: string[] }) => {
@@ -298,7 +333,8 @@ let callbackId = 0;
 (window as any).__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
   transformCallback: () => ++callbackId,
-  convertFileSrc: (id: string) => `/@fs${[...faces, ...systemFaces].find((f) => f.id === id)?.path ?? ""}`,
+  // `<library id>~<face id>`, as the real protocol expects.
+  convertFileSrc: (id: string) => `/@fs${[...faces, ...systemFaces].find((f) => f.id === id.split("~")[1])?.path ?? ""}`,
   invoke: async (cmd: string, args: unknown) => {
     // Dialogs have no window in a plain browser: use the browser's own confirm.
     if (cmd === "plugin:dialog|message") {
@@ -306,6 +342,7 @@ let callbackId = 0;
       const [ok, cancel] = buttons?.OkCancelCustom ?? ["Ok", "Cancel"];
       return window.confirm(message) ? ok : cancel;
     }
+    if (cmd === "plugin:dialog|save" || cmd === "plugin:dialog|open") return window.prompt("Path", "/Users/demo/My library.typeshelf");
     if (cmd.startsWith("plugin:")) return ++callbackId;
     const handler = commands[cmd];
     if (!handler) throw new Error(`Unknown command in demo mode: ${cmd}`);
