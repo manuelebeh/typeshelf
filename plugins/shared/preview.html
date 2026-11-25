@@ -19,6 +19,7 @@
             new Promise((resolve) =>
               setTimeout(() => {
                 if (method === "GET") return resolve({ app: "Typeshelf", api: 1 });
+                if (path.startsWith("/v1/bridge/")) return resolve({ commands: [] });
                 resolve({
                   results: body.fonts.map((name) =>
                     name.startsWith("Lora")
@@ -30,6 +31,8 @@
             ),
           documentFonts: async () => ({ name: "Affiche.psd", fonts: doc.map((name) => ({ name, installed: installed.has(name) })) }),
           onDocumentChange() {},
+          applyFont: async () => ({ count: 1 }),
+          selection: async () => ({ text: "Summer Sounds", font: "Helvetica", size: 72, color: "#1b2a8a", tracking: 0, count: 1 }),
         },
         document.getElementById("app"),
       );

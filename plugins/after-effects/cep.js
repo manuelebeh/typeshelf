@@ -86,5 +86,17 @@
     };
   }
 
-  root.TypeshelfCep = { applySkin: applySkin, client: client, evalScript: evalScript, parseFonts: parseFonts };
+  /** Reads "key<TAB>value" lines whose values are percent-encoded (ExtendScript has no JSON). */
+  function parsePairs(result) {
+    var out = {};
+    String(result || "")
+      .split("\n")
+      .forEach(function (line) {
+        var tab = line.indexOf("\t");
+        if (tab > 0) out[line.slice(0, tab)] = decodeURIComponent(line.slice(tab + 1));
+      });
+    return out;
+  }
+
+  root.TypeshelfCep = { applySkin: applySkin, client: client, evalScript: evalScript, parseFonts: parseFonts, parsePairs: parsePairs };
 })(window);

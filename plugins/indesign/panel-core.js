@@ -14,6 +14,13 @@
  *                               missing only if the system lacks it and Typeshelf holds it,
  *                               so fonts private to the app are not reported
  *   onDocumentChange(cb)      calls cb when a document is opened or brought forward
+ *
+ * and, optionally, what Typeshelf may ask of the application (the panel then polls for it):
+ *   applyFont(psName)         → Promise<{ count } | { retry: true } | { error }>
+ *                               retry: the application does not list the font yet
+ *   selection()               → Promise<{ text, font, size, color, tracking, count } | { error }>
+ *                               the selected text and the style of its first character
+ * where error is "no_document", "no_selection" or a message.
  */
 (function (root) {
   "use strict";
@@ -54,6 +61,8 @@
     "Error {status}": "Erreur {status}",
     "Typeshelf does not recognise this plugin: install it again from Typeshelf.": "Typeshelf ne reconnaît pas ce plugin : réinstallez-le depuis Typeshelf.",
     "the application script failed": "script de l'application en erreur",
+    "Preview in Typeshelf": "Aperçu dans Typeshelf",
+    "Select some text first.": "Sélectionnez d'abord du texte.",
   };
   var french = /^fr\b/i.test((typeof navigator !== "undefined" && navigator.language) || "");
 
@@ -73,10 +82,24 @@
     unknown: "To check",
   };
 
+  var POLL_MS = 1000;
+  var IDLE_MS = 5000; // while Typeshelf does not answer
+  var APPLY_RETRY_MS = 750;
+  var APPLY_RETRIES = 8;
+
+  function messageOf(e) {
+    return e && e.message ? e.message : String(e);
+  }
+
   function create(host, container) {
     var prefs = loadPrefs();
     var state = { connected: null, connectionError: "", doc: null, results: {}, busy: false, message: "" };
     var checking = false;
+    var can = [];
+    if (host.applyFont) can.push("apply");
+    if (host.selection) can.push("selection");
+    var commands = Promise.resolve();
+    var pollFailures = 0;
 
     function loadPrefs() {
       var p = { auto: true, google: true, scope: "temporary" };
@@ -169,6 +192,7 @@
         (state.busy ? t("Activating…") : missing.length ? t(missing.length > 1 ? "Activate {n} fonts" : "Activate {n} font", { n: missing.length }) : t("Nothing to activate")) +
         "</button>" +
         '<button id="ts-check"' + (state.busy ? ' class="is-disabled" disabled' : "") + ">" + t("Check again") + "</button>" +
+        (host.selection ? '<button id="ts-preview"' + (state.connected ? "" : ' class="is-disabled" disabled') + ">" + t("Preview in Typeshelf") + "</button>" : "") +
         "</div>" +
         '<div class="options">' +
         option("ts-auto", prefs.auto, t("Activate automatically on open")) +
@@ -188,7 +212,7 @@
         },
         function (e) {
           state.connected = false;
-          state.connectionError = e && e.message ? e.message : String(e);
+          state.connectionError = messageOf(e);
         },
       );
     }
@@ -290,10 +314,114 @@
         });
     }
 
+    function applyFont(name, retries) {
+      return Promise.resolve()
+        .then(function () {
+          return host.applyFont(name);
+        })
+        .then(function (r) {
+          if (r.error) return { ok: false, error: r.error };
+          if (!r.retry) return { ok: true, count: r.count };
+          // A font activated a moment ago may not be listed yet.
+          if (retries <= 0) return { ok: false, error: "font_unavailable" };
+          return new Promise(function (resolve) {
+            setTimeout(resolve, APPLY_RETRY_MS);
+          }).then(function () {
+            return applyFont(name, retries - 1);
+          });
+        });
+    }
+
+    function readSelection() {
+      return Promise.resolve()
+        .then(function () {
+          return host.selection();
+        })
+        .then(function (r) {
+          return r.error ? { ok: false, error: r.error } : { ok: true, count: r.count, selection: r };
+        });
+    }
+
+    /** Carries out one command from Typeshelf and reports how it went. */
+    function run(command) {
+      var report = function (outcome) {
+        outcome.id = command.id;
+        outcome.kind = command.kind;
+        return host.call("POST", "/v1/bridge/result", outcome);
+      };
+      var work = command.kind === "apply" ? applyFont(command.font, APPLY_RETRIES) : readSelection();
+      return work
+        .then(report, function (e) {
+          return report({ ok: false, error: messageOf(e) });
+        })
+        .then(
+          function () {
+            if (command.kind === "apply") check(false);
+          },
+          function () {
+            /* Typeshelf quit meanwhile: nothing to report to */
+          },
+        );
+    }
+
+    function setConnected(connected) {
+      if (state.connected === connected) return;
+      state.connected = connected;
+      render();
+      // Fonts left "To check" can be judged now.
+      if (connected) check(false);
+    }
+
+    /** Typeshelf cannot call the application: ask it what it wants, over and over. */
+    function poll() {
+      host
+        .call("POST", "/v1/bridge/poll", { document: state.doc ? state.doc.name : null, can: can })
+        .then(
+          function (res) {
+            pollFailures = 0;
+            setConnected(true);
+            (res.commands || []).forEach(function (command) {
+              commands = commands.then(function () {
+                return run(command);
+              });
+            });
+            return POLL_MS;
+          },
+          function () {
+            // One failure may only be a busy server: check before saying it is gone.
+            if (++pollFailures !== 3) return pollFailures > 3 ? IDLE_MS : POLL_MS;
+            var before = state.connected;
+            return ping().then(function () {
+              if (state.connected !== before) render();
+              return IDLE_MS;
+            });
+          },
+        )
+        .then(function (delay) {
+          setTimeout(poll, delay);
+        });
+    }
+
+    /** The panel's button: shows the selected text in every font of the library. */
+    function sendSelection() {
+      state.message = "";
+      readSelection()
+        .then(function (outcome) {
+          if (outcome.ok) return host.call("POST", "/v1/bridge/selection", { selection: outcome.selection });
+          state.message =
+            outcome.error === "no_selection" ? t("Select some text first.") : outcome.error === "no_document" ? t("No document open.") : outcome.error;
+        })
+        .catch(function (e) {
+          state.message = messageOf(e);
+        })
+        .then(render);
+    }
+
     container.addEventListener("click", function (e) {
       var id = e.target && e.target.id;
       if (id === "ts-activate") activate();
       else if (id === "ts-check") check(false);
+      else if (id === "ts-preview") sendSelection();
     });
     container.addEventListener("change", function (e) {
       var t = e.target;
@@ -315,6 +443,7 @@
 
     render();
     check(true);
+    if (can.length) poll();
     return { check: check, activate: activate };
   }
 

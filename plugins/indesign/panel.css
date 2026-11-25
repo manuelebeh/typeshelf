@@ -37,7 +37,7 @@ body {
 .chip.unavailable, .chip.error { color: var(--ts-red); }
 .chip.unknown { font-style: italic; }
 .message { margin: 6px 0; color: var(--ts-muted); }
-.actions { display: flex; gap: 6px; margin: 8px 0 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
 .actions button {
   font: inherit;
   padding: 5px 10px;

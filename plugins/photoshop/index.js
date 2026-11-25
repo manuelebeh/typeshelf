@@ -1,8 +1,9 @@
 /*
  * Typeshelf for Photoshop (UXP). Lists the fonts used by the text layers of the active
- * document and asks Typeshelf, running on this computer, to activate the missing ones.
+ * document and asks Typeshelf, running on this computer, to activate the missing ones. It also
+ * applies a font chosen in Typeshelf to the selected text layers, and sends their text there.
  */
-const { app, action, constants } = require("photoshop");
+const { app, action, constants, core } = require("photoshop");
 const createPanel = require("./panel-core.js");
 
 // Photoshop only allows host names declared in the manifest ("http://localhost"), not IPs.
@@ -72,6 +73,23 @@ function installedFonts() {
   return names;
 }
 
+/** The text layers selected in the Layers panel; or why there are none. */
+function selectedText() {
+  if (!app.documents.length) return { error: "no_document" };
+  const doc = app.activeDocument;
+  const layers = Array.from(doc.activeLayers).filter((layer) => layer.kind === constants.LayerKind.TEXT);
+  return layers.length ? { doc, layers } : { error: "no_selection" };
+}
+
+/** `#rrggbb`, or null for a colour Photoshop cannot express that way. */
+function hexColor(color) {
+  try {
+    return `#${color.rgb.hexValue}`;
+  } catch (e) {
+    return null;
+  }
+}
+
 const host = {
   name: "Photoshop",
   call,
@@ -85,6 +103,35 @@ const host = {
       name: doc.title,
       fonts: used.map((name) => (installed.has(name) ? { name, installed: null, appLists: true } : { name, installed: false })),
     };
+  },
+  async selection() {
+    const { error, layers } = selectedText();
+    if (error) return { error };
+    const item = layers[0].textItem;
+    const style = item.characterStyle;
+    return {
+      text: item.contents,
+      font: style.font,
+      size: style.size,
+      color: hexColor(style.color),
+      tracking: style.tracking,
+      count: layers.length,
+    };
+  },
+  /** Sets the font of whole layers, as a single history step. */
+  async applyFont(name) {
+    const { error, doc, layers } = selectedText();
+    if (error) return { error };
+    if (!installedFonts().has(name)) return { retry: true };
+    await core.executeAsModal(
+      async (context) => {
+        const history = await context.hostControl.suspendHistory({ documentID: doc.id, name: "Typeshelf" });
+        for (const layer of layers) layer.textItem.characterStyle.font = name;
+        await context.hostControl.resumeHistory(history);
+      },
+      { commandName: "Typeshelf" },
+    );
+    return { count: layers.length };
   },
   onDocumentChange(cb) {
     action.addNotificationListener(["open", "select"], (event, descriptor) => {
