@@ -220,7 +220,7 @@ pub fn append(path: &Path, events: &[Event]) -> Result<(), String> {
         let mut last = [0];
         file.seek(SeekFrom::End(-1)).map_err(fail)?;
         file.read_exact(&mut last).map_err(fail)?;
-        if last != [b'\n'] {
+        if last != *b"\n" {
             text.push('\n');
         }
     }
