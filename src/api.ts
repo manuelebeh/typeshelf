@@ -73,6 +73,37 @@ export interface FaceDetails {
   fileSize: number;
 }
 
+export interface DuplicateCopy {
+  path: string;
+  faceIndex: number;
+  version: string | null;
+  fileSize: number;
+  modified: number;
+  location: "library" | "imported" | "user" | "system";
+  active: boolean;
+  scope: Scope;
+  trashable: boolean;
+  facesInFile: number;
+  /** Every font of the file also exists in another file. */
+  otherFacesRedundant: boolean;
+}
+
+export interface DuplicateGroup {
+  psName: string;
+  family: string;
+  style: string;
+  copies: DuplicateCopy[];
+  conflict: boolean;
+}
+
+export interface Insights {
+  faces: number;
+  activeFaces: number;
+  groups: DuplicateGroup[];
+  extraCopies: number;
+  extraBytes: number;
+}
+
 export interface GoogleFamily {
   family: string;
   category: string;
@@ -120,6 +151,8 @@ export interface PluginActivity {
 }
 
 export const api = {
+  insights: (refresh: boolean) => invoke<Insights>("insights", { refresh }),
+  trashCopies: (paths: string[]) => invoke<string[]>("trash_copies", { paths }),
   loadLibrary: () => invoke<Library>("load_library"),
   systemFonts: () => invoke<Face[]>("system_fonts"),
   importPaths: (paths: string[], copy: boolean) => invoke<ImportSummary>("import_paths", { paths, copy }),

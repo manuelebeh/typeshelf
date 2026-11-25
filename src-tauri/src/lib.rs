@@ -2,6 +2,7 @@ mod activation;
 mod db;
 mod fonts;
 mod google;
+mod insights;
 mod model;
 mod plugin_api;
 mod plugin_install;
@@ -11,7 +12,7 @@ use model::{Face, FaceDetails, ImportSummary, Library, Scope, Tag};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::http::{header, Response, StatusCode};
 use tauri::{AppHandle, Manager, RunEvent, State};
@@ -19,18 +20,41 @@ use tauri::{AppHandle, Manager, RunEvent, State};
 struct AppState {
     db: Mutex<Db>,
     fonts_dir: PathBuf,
-    /// Fonts installed on the system, scanned once in the background.
-    system: OnceLock<Vec<Face>>,
+    /// Fonts installed on the system, scanned in the background and cached.
+    system: RwLock<Option<Arc<SystemScan>>>,
 }
 
-fn system_faces(state: &AppState) -> &Vec<Face> {
-    state.system.get_or_init(fonts::scan_system)
+struct SystemScan {
+    /// Every installed copy, for Insights.
+    all: Vec<Face>,
+    /// One face per PostScript name, for the library list and the plugins.
+    unique: Vec<Face>,
+}
+
+impl SystemScan {
+    fn new(all: Vec<Face>) -> Self {
+        SystemScan { unique: fonts::unique_faces(&all), all }
+    }
+}
+
+fn system_scan(state: &AppState) -> Arc<SystemScan> {
+    if let Some(scan) = state.system.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        return scan.clone();
+    }
+    // Holding the write lock while scanning keeps concurrent callers from scanning twice.
+    let mut cache = state.system.write().unwrap_or_else(|p| p.into_inner());
+    cache.get_or_insert_with(|| Arc::new(SystemScan::new(fonts::scan_system_all()))).clone()
+}
+
+/// Forgets the cached system fonts, after files were added to or removed from the OS folders.
+fn invalidate_system(state: &AppState) {
+    *state.system.write().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Library faces live in the database; system faces (`sys-…` ids) in memory.
 fn lookup_face(state: &AppState, id: &str) -> Option<Face> {
     if id.starts_with("sys-") {
-        system_faces(state).iter().find(|f| f.id == id).cloned()
+        system_scan(state).unique.iter().find(|f| f.id == id).cloned()
     } else {
         lock(state).face(id).ok().flatten()
     }
@@ -38,7 +62,7 @@ fn lookup_face(state: &AppState, id: &str) -> Option<Face> {
 
 #[tauri::command]
 async fn system_fonts(app: AppHandle) -> CmdResult<Vec<Face>> {
-    tauri::async_runtime::spawn_blocking(move || system_faces(&app.state::<AppState>()).clone()).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || system_scan(&app.state::<AppState>()).unique.clone()).await.map_err(|e| e.to_string())
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -162,6 +186,33 @@ fn remove_families(state: State<AppState>, families: Vec<String>) -> CmdResult<V
         }
     }
     Ok(errors)
+}
+
+// ---------------------------------------------------------------- insights
+
+/// Duplicates and conflicts. `refresh` rescans the OS font folders first.
+#[tauri::command]
+async fn insights(app: AppHandle, refresh: bool) -> CmdResult<insights::Insights> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if refresh {
+            invalidate_system(&state);
+        }
+        insights::collect(&state, &insights::Roots::new(&state.fonts_dir))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn trash_copies(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let roots = insights::Roots::new(&state.fonts_dir);
+        insights::trash_copies(&state, &roots, paths, |path| trash::delete(path).map_err(|e| e.to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---------------------------------------------------------------- activation
@@ -430,14 +481,14 @@ pub fn run() {
             let fonts_dir = data_dir.join("Fonts");
             fs::create_dir_all(&fonts_dir)?;
             let db = Db::open(&data_dir.join("library.sqlite"))?;
-            let state = AppState { db: Mutex::new(db), fonts_dir, system: OnceLock::new() };
+            let state = AppState { db: Mutex::new(db), fonts_dir, system: RwLock::new(None) };
             reset_temporary(&state);
             reconcile_with_system(&state);
             app.manage(state);
             // Warm the system font list so the sidebar fills quickly.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                system_faces(&handle.state::<AppState>());
+                system_scan(&handle.state::<AppState>());
             });
             plugin_api::start(app.handle().clone());
             Ok(())
@@ -445,6 +496,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_library,
             system_fonts,
+            insights,
+            trash_copies,
             import_paths,
             remove_families,
             set_activation,
@@ -513,7 +566,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("typeshelf-test-{}", uuid::Uuid::new_v4()));
         let fonts_dir = root.join("Fonts");
         fs::create_dir_all(&fonts_dir).unwrap();
-        let state = AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir, system: OnceLock::new() };
+        let state = AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir, system: RwLock::new(None) };
 
         let src = source.to_string_lossy().into_owned();
         let first = import_blocking(&state, vec![src.clone()], true).unwrap();
@@ -598,7 +651,7 @@ mod tests {
         }
 
         // System fonts: found by id (as the tsfont protocol does) and served as standalone fonts.
-        if let Some(sys) = system_faces(&state).iter().find(|f| f.path.ends_with(".ttc")) {
+        if let Some(sys) = system_scan(&state).unique.iter().find(|f| f.path.ends_with(".ttc")) {
             let found = lookup_face(&state, &sys.id).expect("system font found by its id");
             let data = fonts::map(Path::new(&found.path)).unwrap();
             let bytes = fonts::face_bytes(&data, found.face_index).unwrap();

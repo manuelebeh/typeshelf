@@ -1,6 +1,7 @@
 /** Small line icons drawn for Typeshelf (24×24 grid, stroked with currentColor). */
 const PATHS: Record<string, string> = {
   all: `<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M7.5 16 11 8l3.5 8M8.7 13.3h4.6M16.5 11.5v4.5"/>`,
+  insights: `<path d="M3.5 12.5h3.8l2.4-6 4.4 11 2.4-5h4"/>`,
   star: `<path d="m12 3.8 2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>`,
   active: `<circle cx="12" cy="12" r="8.5"/><path d="m8.3 12.3 2.5 2.5 5-5.2"/>`,
   recent: `<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>`,

@@ -219,24 +219,40 @@ pub fn details(path: &Path, index: u32) -> Result<FaceDetails, String> {
     })
 }
 
-/// Folders where the OS and the user install fonts.
-pub fn system_font_dirs() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
+}
+
+/// Folders where the current user installs fonts, without administrator rights.
+pub fn user_font_dirs() -> Vec<PathBuf> {
+    let home = home_dir();
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
-        dirs.extend(["/System/Library/Fonts", "/Library/Fonts"].map(PathBuf::from));
         dirs.extend(home.map(|h| h.join("Library/Fonts")));
     } else if cfg!(windows) {
-        let windir = std::env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\Windows"));
-        dirs.push(windir.join("Fonts"));
         dirs.extend(std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Microsoft\\Windows\\Fonts")));
     } else {
-        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from));
         let data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home.as_ref().map(|h| h.join(".local/share")));
         dirs.extend(data_home.map(|d| d.join("fonts")));
         dirs.extend(home.map(|h| h.join(".fonts")));
     }
     dirs.into_iter().filter(|d| d.is_dir()).collect()
+}
+
+/// Folders where the OS and the user install fonts.
+pub fn system_font_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        dirs.extend(["/System/Library/Fonts", "/Library/Fonts"].map(PathBuf::from));
+    } else if cfg!(windows) {
+        let windir = std::env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\Windows"));
+        dirs.push(windir.join("Fonts"));
+    } else {
+        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from));
+    }
+    dirs.retain(|d| d.is_dir());
+    dirs.extend(user_font_dirs());
+    dirs
 }
 
 /// Stable id for a system face, so previews keep working across rescans.
@@ -260,8 +276,8 @@ pub fn supports(path: &Path, index: u32, samples: &[String]) -> Result<Vec<bool>
     Ok(samples.iter().map(|text| text.chars().filter(|c| c.is_alphanumeric()).all(|c| face.glyph_index(c).is_some())).collect())
 }
 
-pub fn scan_system() -> Vec<Face> {
-    let mut seen = HashSet::new();
+/// Every installed copy of every face, including several files carrying the same font.
+pub fn scan_system_all() -> Vec<Face> {
     let mut faces = Vec::new();
     for file in font_files(&system_font_dirs()) {
         // Links Typeshelf itself creates on Linux are library fonts, not system ones.
@@ -277,7 +293,7 @@ pub fn scan_system() -> Vec<Face> {
         let Ok(scanned) = scan(&file, modified) else { continue };
         for mut face in scanned {
             // macOS hides its UI fonts behind a leading dot (".SF NS", …).
-            if face.family.starts_with('.') || !seen.insert(face.ps_name.clone()) {
+            if face.family.starts_with('.') {
                 continue;
             }
             face.id = system_face_id(&file, face.face_index);
@@ -285,6 +301,12 @@ pub fn scan_system() -> Vec<Face> {
         }
     }
     faces
+}
+
+/// One face per PostScript name, the first copy found.
+pub fn unique_faces(faces: &[Face]) -> Vec<Face> {
+    let mut seen = HashSet::new();
+    faces.iter().filter(|f| seen.insert(f.ps_name.as_str())).cloned().collect()
 }
 
 fn is_visible(cp: u32) -> bool {
@@ -365,14 +387,16 @@ mod tests {
             return;
         }
         let started = std::time::Instant::now();
-        let faces = scan_system();
-        eprintln!("{} system styles in {:?}", faces.len(), started.elapsed());
+        let all = scan_system_all();
+        let faces = unique_faces(&all);
+        eprintln!("{} system styles ({} copies) in {:?}", faces.len(), all.len(), started.elapsed());
+        assert!(all.len() >= faces.len());
         assert!(!faces.is_empty());
         assert!(faces.iter().all(|f| f.id.starts_with("sys-") && !f.family.starts_with('.')));
         let unique: HashSet<_> = faces.iter().map(|f| &f.ps_name).collect();
         assert_eq!(unique.len(), faces.len(), "noms PostScript en double");
         // Ids are stable between scans.
-        let again = scan_system();
+        let again = unique_faces(&scan_system_all());
         assert_eq!(faces.first().map(|f| &f.id), again.first().map(|f| &f.id));
     }
 

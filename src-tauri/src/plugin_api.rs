@@ -6,7 +6,7 @@
 //! a custom header, which browsers only send after a CORS preflight that is never granted.
 
 use crate::model::Scope;
-use crate::{activation, fonts, google, google_cache, import_blocking, lock, now, system_faces, AppState};
+use crate::{activation, fonts, google, google_cache, import_blocking, lock, now, system_scan, AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -317,7 +317,8 @@ fn os_has(name: &str, system: &HashSet<&str>) -> bool {
 
 /// Read-only: which of these fonts can already be used, and which the library holds.
 pub fn font_status(state: &AppState, names: &[String]) -> Vec<FontStatus> {
-    let system: HashSet<&str> = system_faces(state).iter().map(|f| f.ps_name.as_str()).collect();
+    let scan = system_scan(state);
+    let system: HashSet<&str> = scan.unique.iter().map(|f| f.ps_name.as_str()).collect();
     let db = lock(state);
     let library = db.faces().unwrap_or_default();
     names
@@ -347,7 +348,8 @@ pub fn activate_fonts(state: &AppState, names: &[String], scope: Scope, google: 
             wanted.push(name.to_string());
         }
     }
-    let system: HashSet<&str> = system_faces(state).iter().map(|f| f.ps_name.as_str()).collect();
+    let scan = system_scan(state);
+    let system: HashSet<&str> = scan.unique.iter().map(|f| f.ps_name.as_str()).collect();
     let mut results: BTreeMap<String, FontResult> = BTreeMap::new();
     let mut to_activate: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut missing: Vec<String> = Vec::new();
@@ -456,12 +458,16 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
 mod tests {
     use super::*;
     use crate::db::Db;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Mutex, RwLock};
 
     fn temp_state() -> AppState {
         let root = std::env::temp_dir().join(format!("typeshelf-api-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("Fonts")).unwrap();
-        AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir: root.join("Fonts"), system: OnceLock::new() }
+        AppState {
+            db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()),
+            fonts_dir: root.join("Fonts"),
+            system: RwLock::new(None),
+        }
     }
 
     fn req<'a>(method: &'a str, url: &'a str, body: &'a str) -> Request<'a> {
@@ -534,7 +540,7 @@ mod tests {
     #[test]
     fn reports_system_and_missing_fonts() {
         let state = temp_state();
-        let installed = system_faces(&state).first().map(|f| f.ps_name.clone());
+        let installed = system_scan(&state).unique.first().map(|f| f.ps_name.clone());
         let mut fonts = vec!["Nonexistent-Font-123".to_string(), "Nonexistent-Font-123".to_string()];
         fonts.extend(installed.clone());
         let body = json!({ "fonts": fonts, "google": false }).to_string();
@@ -552,7 +558,7 @@ mod tests {
     #[test]
     fn status_tells_installed_from_unknown_fonts() {
         let state = temp_state();
-        let installed = system_faces(&state).first().map(|f| f.ps_name.clone()).expect("at least one system font");
+        let installed = system_scan(&state).unique.first().map(|f| f.ps_name.clone()).expect("at least one system font");
         let body = json!({ "fonts": [installed, "Nonexistent-Font-123"] }).to_string();
         let (code, value, activity) = route(&state, &req("POST", "/v1/fonts/status", &body));
         assert_eq!(code, 200);

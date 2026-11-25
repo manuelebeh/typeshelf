@@ -3,7 +3,7 @@
  * is opened in a regular browser. It never ships: main.ts loads it only in dev mode
  * outside Tauri. Previews use fonts bundled with macOS.
  */
-import type { Collection, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, Tag } from "../api";
+import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, Tag } from "../api";
 
 const SUP = "/System/Library/Fonts/Supplemental";
 let n = 0;
@@ -131,7 +131,71 @@ const demoPlugins: PluginInstallState[] = [
   { id: "sketch", name: "Sketch", state: "absent", appFound: false, appRunning: false },
 ];
 
+// Insights: a conflict, a copy renamed by Finder, a protected system copy and a collection file.
+const copy = (path: string, location: DuplicateCopy["location"], extra: Partial<DuplicateCopy> = {}): DuplicateCopy => ({
+  path,
+  faceIndex: 0,
+  version: "Version 1.0",
+  fileSize: 312_000,
+  modified: Date.now() / 1000 - 86400 * 40,
+  location,
+  active: location === "user" || location === "system",
+  scope: "none",
+  trashable: location !== "system",
+  facesInFile: 1,
+  otherFacesRedundant: true,
+  ...extra,
+});
+let duplicates: DuplicateGroup[] = [
+  {
+    psName: "Inter-Regular",
+    family: "Inter",
+    style: "Regular",
+    conflict: true,
+    copies: [
+      copy("/Users/demo/Typeshelf/Fonts/Inter/Inter-Regular.ttf", "library", { active: true, scope: "persistent", version: "Version 4.0", fileSize: 411_000 }),
+      copy("/Users/demo/Library/Fonts/Inter-Regular.ttf", "user", { version: "Version 3.19" }),
+    ],
+  },
+  {
+    psName: "Lora-Regular",
+    family: "Lora",
+    style: "Regular",
+    conflict: false,
+    copies: [
+      copy("/Users/demo/Typeshelf/Fonts/Lora/Lora-Regular.ttf", "library"),
+      copy("/Users/demo/Typeshelf/Fonts/Lora/Lora-Regular 2.ttf", "library"),
+    ],
+  },
+  {
+    psName: "Georgia",
+    family: "Georgia",
+    style: "Regular",
+    conflict: true,
+    copies: [
+      copy("/Library/Fonts/Georgia.ttf", "system"),
+      copy("/Users/demo/Library/Fonts/Georgia copy.ttc", "user", { facesInFile: 4, otherFacesRedundant: false }),
+      copy("/Users/demo/Downloads/Georgia.ttf", "imported", { fileSize: 150_000 }),
+    ],
+  },
+];
+const insights = (): Insights => ({
+  faces: 128,
+  activeFaces: 94,
+  groups: duplicates,
+  extraCopies: duplicates.reduce((sum, g) => sum + g.copies.length - 1, 0),
+  extraBytes: duplicates.reduce((sum, g) => sum + g.copies.slice(1).reduce((s, c) => s + c.fileSize, 0), 0),
+});
+
 const commands: Record<string, (a: any) => unknown> = {
+  insights,
+  trash_copies: ({ paths }: { paths: string[] }) => {
+    duplicates = duplicates
+      .map((g) => ({ ...g, copies: g.copies.filter((c) => !paths.includes(c.path)) }))
+      .filter((g) => g.copies.length > 1)
+      .map((g) => ({ ...g, conflict: g.copies.filter((c) => c.active).length > 1 }));
+    return [];
+  },
   plugin_api_status: () => ({ port: 47391, enabled: true, listening: true, error: null }),
   plugin_api_config: ({ enabled }: { enabled: boolean }) => ({ port: 47391, enabled, listening: true, error: null }),
   plugins_list: () => demoPlugins,
@@ -224,6 +288,12 @@ let callbackId = 0;
   transformCallback: () => ++callbackId,
   convertFileSrc: (id: string) => `/@fs${[...faces, ...systemFaces].find((f) => f.id === id)?.path ?? ""}`,
   invoke: async (cmd: string, args: unknown) => {
+    // Dialogs have no window in a plain browser: use the browser's own confirm.
+    if (cmd === "plugin:dialog|message") {
+      const { message, buttons } = args as { message: string; buttons?: { OkCancelCustom?: [string, string] } };
+      const [ok, cancel] = buttons?.OkCancelCustom ?? ["Ok", "Cancel"];
+      return window.confirm(message) ? ok : cancel;
+    }
     if (cmd.startsWith("plugin:")) return ++callbackId;
     const handler = commands[cmd];
     if (!handler) throw new Error(`Unknown command in demo mode: ${cmd}`);
