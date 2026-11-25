@@ -194,7 +194,9 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   Scripts cannot read the highlighted characters, so applying works on whole layers. Before
   changing anything the panel asks each font whether it has the letters of the text
   (`FontObject.hasGlyphsFor`, After Effects 25.1 and later); older versions read the font back and
-  undo.
+  undo. Under an expression, `value` is what the expression returns, even before expressions
+  (`valueAtTime(t, true)`): the panel turns the expression off while it writes, so the layer keeps
+  its own text.
 - Sketch (tried in Sketch 2026.1): a missing font that is not embedded in the file is replaced in
   memory by a system font, and only the document data keeps its name (`fontNames`, outside the
   documented API; failing that, the plugin reads the fonts of the text). Fonts embedded in the file

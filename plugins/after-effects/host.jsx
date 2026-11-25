@@ -143,7 +143,9 @@ function typeshelfTexts(prop) {
 function typeshelfCovers(font, layers) {
   if (!font.hasGlyphsFor) return true;
   for (var i = 0; i < layers.length; i++) {
-    var texts = typeshelfTexts(typeshelfSourceText(layers[i]));
+    var prop = typeshelfSourceText(layers[i]);
+    // With an expression, what it returns is what shows.
+    var texts = prop.expressionEnabled ? [{ doc: prop.value }] : typeshelfTexts(prop);
     for (var k = 0; k < texts.length; k++) {
       // Spaces, line breaks and emoji (never in a text font) do not count.
       var chars = texts[k].doc.text.replace(/[\s\u0000-\u001f\ud800-\udfff\ufe0f\u200d]/g, "");
@@ -153,8 +155,26 @@ function typeshelfCovers(font, layers) {
   return true;
 }
 
-/* Sets the font; false when After Effects did not take it. Counts the writes in progress.writes. */
+/*
+ * Sets the font; false when After Effects did not take it. Counts the changes in progress.writes.
+ * While an expression is enabled, `value` is what it returns: writing that back would replace the
+ * layer's own text, so the expression is off for the time of the change.
+ */
 function typeshelfSetFont(prop, name, progress) {
+  if (!prop.expressionEnabled) return typeshelfSetTexts(prop, name, progress);
+  var taken;
+  prop.expressionEnabled = false;
+  progress.writes++;
+  try {
+    taken = typeshelfSetTexts(prop, name, progress);
+  } finally {
+    prop.expressionEnabled = true;
+  }
+  // An expression may set the font itself: the layer then still shows the old one.
+  return taken && prop.value.font === name;
+}
+
+function typeshelfSetTexts(prop, name, progress) {
   var taken = true;
   var texts = typeshelfTexts(prop);
   for (var i = 0; i < texts.length; i++) {
