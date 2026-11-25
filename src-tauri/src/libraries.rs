@@ -240,6 +240,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(data);
     }
 
+    /// Two installs, each with its own data folder, sharing one package.
+    #[test]
+    fn two_computers_share_a_library() {
+        let root = std::env::temp_dir().join(format!("typeshelf-two-{}", uuid::Uuid::new_v4()));
+        let (a, b) = (AppState::for_tests(&root.join("a")), AppState::for_tests(&root.join("b")));
+        let os = activation::Activator { on: &|_, _| Ok(()), off: &|_, _| Ok(()) };
+        let shared = root.join("Dropbox").join("Team.typeshelf");
+        std::fs::create_dir_all(root.join("Dropbox")).unwrap();
+        create(&a, shared.clone()).unwrap();
+        open(&b, &shared, false).unwrap();
+        // Opening may have taken a moment: bring both up to date.
+        sync(&a, &os).unwrap();
+
+        let names = |s: &AppState| current(s).lock().collections().unwrap().into_iter().map(|c| c.name).collect::<Vec<_>>();
+        let add = |s: &AppState, name: &str| {
+            let op = Op::CollectionCreate { id: name.into(), name: name.into(), created_at: 1 };
+            current(s).lock().commit(vec![op])
+        };
+        add(&a, "From A").unwrap();
+        assert!(sync(&b, &os).unwrap());
+        add(&b, "From B").unwrap();
+        assert!(sync(&a, &os).unwrap());
+        assert_eq!(names(&a), names(&b));
+        assert!(names(&a).contains(&"From A".to_string()) && names(&a).contains(&"From B".to_string()));
+        assert_eq!(journal::files(&shared).unwrap().len(), 2, "one journal per computer");
+        assert!(current(&a).lock().last_change().is_some() && !current(&a).lock().waiting());
+
+        let id = current(&b).id.clone();
+        view_only(&b, &id, true).unwrap();
+        assert!(add(&b, "Refused").is_err());
+        add(&a, "Still A").unwrap();
+        assert!(sync(&b, &os).unwrap());
+        assert!(names(&b).contains(&"Still A".to_string()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn activation_survives_switching_libraries() {
         let data = std::env::temp_dir().join(format!("typeshelf-switch-{}", uuid::Uuid::new_v4()));
