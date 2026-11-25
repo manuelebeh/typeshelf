@@ -3,14 +3,16 @@ mod db;
 mod fonts;
 mod google;
 mod insights;
+mod library;
 mod machine;
 mod model;
 mod plugin_api;
 mod plugin_install;
 
-use db::Db;
+use library::journal::Op;
+use library::{manage, OpenLibrary};
 use machine::MachineDb;
-use model::{Face, FaceDetails, ImportSummary, Library, Scope, SmartSet, Tag};
+use model::{Face, FaceDetails, ImportSummary, Library, Scope};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,10 +22,10 @@ use tauri::http::{header, Response, StatusCode};
 use tauri::{AppHandle, Manager, RunEvent, State};
 
 struct AppState {
-    db: Mutex<Db>,
-    /// Activation and known libraries. Lock after `db` when both are needed.
+    data_dir: PathBuf,
+    /// Activation and known libraries. Lock after a library session when both are needed.
     machine: Mutex<MachineDb>,
-    fonts_dir: PathBuf,
+    library: RwLock<Arc<OpenLibrary>>,
     /// Fonts installed on the system, scanned in the background and cached.
     system: RwLock<Option<Arc<SystemScan>>>,
 }
@@ -60,7 +62,7 @@ fn lookup_face(state: &AppState, id: &str) -> Option<Face> {
     if id.starts_with("sys-") {
         system_scan(state).unique.iter().find(|f| f.id == id).cloned()
     } else {
-        lock(state).face(id).ok().flatten()
+        current(state).lock().face(id).ok().flatten()
     }
 }
 
@@ -75,31 +77,27 @@ fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn lock(state: &AppState) -> std::sync::MutexGuard<'_, Db> {
-    state.db.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+/// The open library. Holding it keeps it usable even if another one gets opened meanwhile.
+fn current(state: &AppState) -> Arc<OpenLibrary> {
+    state.library.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
 }
 
 fn machine(state: &AppState) -> std::sync::MutexGuard<'_, MachineDb> {
     state.machine.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Moves the activation rows of a database written before they had their own file.
-fn move_activation(db: &Db, machine: &MachineDb) -> CmdResult<()> {
-    for (path, scope) in db.take_activation()? {
-        machine.set_scope(&path, Scope::parse(&scope))?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
 impl AppState {
+    fn new(data_dir: PathBuf) -> CmdResult<AppState> {
+        fs::create_dir_all(&data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+        let machine = MachineDb::open(&data_dir.join("machine.sqlite"))?;
+        let library = manage::startup(&data_dir, &machine, now())?;
+        Ok(AppState { data_dir, machine: Mutex::new(machine), library: RwLock::new(Arc::new(library)), system: RwLock::new(None) })
+    }
+
     /// A state over a throwaway library under `root`.
+    #[cfg(test)]
     fn for_tests(root: &Path) -> Self {
-        let fonts_dir = root.join("Fonts");
-        fs::create_dir_all(&fonts_dir).unwrap();
-        let db = Mutex::new(Db::open(&root.join("library.sqlite")).unwrap());
-        let machine = Mutex::new(MachineDb::open(&root.join("machine.sqlite")).unwrap());
-        AppState { db, machine, fonts_dir, system: RwLock::new(None) }
+        AppState::new(root.to_path_buf()).unwrap()
     }
 }
 
@@ -107,23 +105,33 @@ impl AppState {
 
 #[tauri::command]
 async fn load_library(app: AppHandle) -> CmdResult<Library> {
-    // Off the main thread: after an upgrade, the first load reads every library file.
+    // Off the main thread: every library file is checked, possibly on a network drive.
     tauri::async_runtime::spawn_blocking(move || library_blocking(&app.state::<AppState>())).await.map_err(|e| e.to_string())?
 }
 
 fn library_blocking(state: &AppState) -> CmdResult<Library> {
-    let mut db = lock(state);
-    db.backfill_metrics()?;
-    Ok(Library {
-        faces: db.faces()?,
-        collections: db.collections()?,
-        membership: db.membership()?,
-        tags: db.tags()?,
-        tag_membership: db.tag_membership()?,
-        smart_sets: db.smart_sets()?,
-        activation: machine(state).activation()?,
-        fonts_dir: state.fonts_dir.to_string_lossy().into_owned(),
-    })
+    let library = current(state);
+    let mut content = {
+        let session = library.lock();
+        Library {
+            id: library.id.clone(),
+            name: library.name(),
+            root: library.root.to_string_lossy().into_owned(),
+            read_only: session.read_only(),
+            faces: session.faces()?,
+            collections: session.collections()?,
+            membership: session.membership()?,
+            tags: session.tags()?,
+            tag_membership: session.tag_membership()?,
+            smart_sets: session.smart_sets()?,
+            activation: machine(state).activation()?,
+            fonts_dir: library.fonts_dir().to_string_lossy().into_owned(),
+        }
+    };
+    for face in &mut content.faces {
+        face.available = Path::new(&face.path).exists();
+    }
+    Ok(content)
 }
 
 #[tauri::command]
@@ -137,7 +145,14 @@ async fn import_paths(app: AppHandle, paths: Vec<String>, copy: bool) -> CmdResu
 }
 
 fn import_blocking(state: &AppState, paths: Vec<String>, copy: bool) -> CmdResult<ImportSummary> {
-    let mut known = lock(state).known_ps_names()?;
+    let library = current(state);
+    let mut known = {
+        let session = library.lock();
+        if session.read_only() {
+            return Err("This library is view-only".into());
+        }
+        session.known_ps_names()?
+    };
     let mut summary = ImportSummary::default();
     let mut pending = Vec::new();
     let added_at = now();
@@ -157,7 +172,7 @@ fn import_blocking(state: &AppState, paths: Vec<String>, copy: bool) -> CmdResul
             continue;
         }
         let final_path = if copy {
-            match copy_into_library(&state.fonts_dir, &file, &fresh[0].family) {
+            match copy_into_library(&library.fonts_dir(), &file, &fresh[0].family) {
                 Ok(p) => p,
                 Err(_) => {
                     summary.failures.push(file_name(&file));
@@ -173,7 +188,7 @@ fn import_blocking(state: &AppState, paths: Vec<String>, copy: bool) -> CmdResul
         }
         pending.extend(fresh);
     }
-    summary.imported = lock(state).insert_faces(&pending)?;
+    summary.imported = library.lock().add_faces(&pending)?;
     Ok(summary)
 }
 
@@ -199,8 +214,12 @@ fn copy_into_library(root: &Path, file: &Path, family: &str) -> std::io::Result<
 
 #[tauri::command]
 fn remove_families(state: State<AppState>, families: Vec<String>) -> CmdResult<Vec<String>> {
-    let mut db = lock(&state);
-    let faces = db.faces_of_families(&families)?;
+    let library = current(&state);
+    let mut session = library.lock();
+    if session.read_only() {
+        return Err("This library is view-only".into());
+    }
+    let faces = session.faces_of_families(&families)?;
     let paths: BTreeSet<String> = faces.iter().map(|f| f.path.clone()).collect();
     let mut errors = Vec::new();
     {
@@ -214,10 +233,10 @@ fn remove_families(state: State<AppState>, families: Vec<String>) -> CmdResult<V
         }
     }
     activation::finish_batch();
-    db.delete_faces(&faces.iter().map(|f| f.id.clone()).collect::<Vec<_>>())?;
+    session.commit(vec![Op::FaceRemove { ids: faces.iter().map(|f| f.id.clone()).collect() }])?;
     // Files copied into the library go to the Trash once nothing references them.
     for path in &paths {
-        if Path::new(path).starts_with(&state.fonts_dir) && !db.path_in_use(path)? {
+        if Path::new(path).starts_with(library.fonts_dir()) && Path::new(path).exists() && !session.path_in_use(path)? {
             if let Err(e) = trash::delete(path) {
                 errors.push(format!("{}: {e}", file_name(Path::new(path))));
             }
@@ -236,7 +255,7 @@ async fn insights(app: AppHandle, refresh: bool) -> CmdResult<insights::Insights
         if refresh {
             invalidate_system(&state);
         }
-        insights::collect(&state, &insights::Roots::new(&state.fonts_dir))
+        insights::collect(&state, &insights::Roots::new(&current(&state).fonts_dir()))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -246,7 +265,7 @@ async fn insights(app: AppHandle, refresh: bool) -> CmdResult<insights::Insights
 async fn trash_copies(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<String>> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let roots = insights::Roots::new(&state.fonts_dir);
+        let roots = insights::Roots::new(&current(&state).fonts_dir());
         insights::trash_copies(&state, &roots, paths, |path| trash::delete(path).map_err(|e| e.to_string()))
     })
     .await
@@ -303,48 +322,56 @@ fn reconcile_with_system(state: &AppState) {
 
 // ---------------------------------------------------------------- favorites & collections
 
+fn commit(state: &AppState, op: Op) -> CmdResult<()> {
+    current(state).lock().commit(vec![op])
+}
+
+/// Applies `op` to the ids of every face of these families.
+fn commit_faces(state: &AppState, families: &[String], op: impl FnOnce(Vec<String>) -> Op) -> CmdResult<()> {
+    let library = current(state);
+    let mut session = library.lock();
+    let ids = session.faces_of_families(families)?.into_iter().map(|f| f.id).collect();
+    session.commit(vec![op(ids)])
+}
+
+fn required(name: &str) -> CmdResult<String> {
+    match name.trim() {
+        "" => Err("The name cannot be empty".into()),
+        name => Ok(name.into()),
+    }
+}
+
 #[tauri::command]
 fn set_starred(state: State<AppState>, family: String, starred: bool) -> CmdResult<()> {
-    lock(&state).set_starred(&family, starred)
+    commit_faces(&state, &[family], |ids| Op::FaceStar { ids, starred })
 }
 
 #[tauri::command]
 fn create_collection(state: State<AppState>, name: String) -> CmdResult<String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("The name cannot be empty".into());
-    }
+    let name = required(&name)?;
     let id = uuid::Uuid::new_v4().to_string();
-    lock(&state).create_collection(&id, name, now())?;
+    commit(&state, Op::CollectionCreate { id: id.clone(), name, created_at: now() })?;
     Ok(id)
 }
 
 #[tauri::command]
 fn rename_collection(state: State<AppState>, id: String, name: String) -> CmdResult<()> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("The name cannot be empty".into());
-    }
-    lock(&state).rename_collection(&id, name)
+    commit(&state, Op::CollectionRename { id, name: required(&name)? })
 }
 
 #[tauri::command]
 fn delete_collection(state: State<AppState>, id: String) -> CmdResult<()> {
-    lock(&state).delete_collection(&id)
+    commit(&state, Op::CollectionDelete { id })
 }
 
 #[tauri::command]
 fn add_to_collection(state: State<AppState>, id: String, families: Vec<String>) -> CmdResult<()> {
-    let mut db = lock(&state);
-    let ids: Vec<String> = db.faces_of_families(&families)?.into_iter().map(|f| f.id).collect();
-    db.add_to_collection(&id, &ids)
+    commit_faces(&state, &families, |faces| Op::CollectionAdd { id, faces })
 }
 
 #[tauri::command]
 fn remove_from_collection(state: State<AppState>, id: String, families: Vec<String>) -> CmdResult<()> {
-    let mut db = lock(&state);
-    let ids: Vec<String> = db.faces_of_families(&families)?.into_iter().map(|f| f.id).collect();
-    db.remove_from_collection(&id, &ids)
+    commit_faces(&state, &families, |faces| Op::CollectionRemove { id, faces })
 }
 
 // ---------------------------------------------------------------- tags
@@ -352,9 +379,7 @@ fn remove_from_collection(state: State<AppState>, id: String, families: Vec<Stri
 const TAG_COLORS: &[&str] = &["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "gray"];
 
 fn validate_tag(name: &str, color: &str, rule: &Option<String>) -> CmdResult<()> {
-    if name.trim().is_empty() {
-        return Err("The name cannot be empty".into());
-    }
+    required(name)?;
     if !TAG_COLORS.contains(&color) {
         return Err(format!("Unknown color: {color}"));
     }
@@ -367,37 +392,42 @@ fn validate_tag(name: &str, color: &str, rule: &Option<String>) -> CmdResult<()>
 #[tauri::command]
 fn create_tag(state: State<AppState>, name: String, color: String, rule: Option<String>) -> CmdResult<String> {
     validate_tag(&name, &color, &rule)?;
-    let tag = Tag { id: uuid::Uuid::new_v4().to_string(), name: name.trim().into(), color, rule, created_at: now() };
-    lock(&state).save_tag(&tag)?;
-    Ok(tag.id)
+    let id = uuid::Uuid::new_v4().to_string();
+    commit(&state, Op::TagSave { id: id.clone(), name: name.trim().into(), color, rule, created_at: now() })?;
+    Ok(id)
 }
 
 #[tauri::command]
 fn update_tag(state: State<AppState>, id: String, name: String, color: String, rule: Option<String>) -> CmdResult<()> {
     validate_tag(&name, &color, &rule)?;
-    let db = lock(&state);
-    let existing = db.tags()?.into_iter().find(|t| t.id == id).ok_or("Tag not found")?;
-    db.save_tag(&Tag { id, name: name.trim().into(), color, rule, created_at: existing.created_at })
+    let library = current(&state);
+    let mut session = library.lock();
+    let existing = session.tags()?.into_iter().find(|t| t.id == id).ok_or("Tag not found")?;
+    session.commit(vec![Op::TagSave { id, name: name.trim().into(), color, rule, created_at: existing.created_at }])
 }
 
 #[tauri::command]
 fn delete_tag(state: State<AppState>, id: String) -> CmdResult<()> {
-    lock(&state).delete_tag(&id)
+    commit(&state, Op::TagDelete { id })
 }
 
 #[tauri::command]
 fn set_tagged(state: State<AppState>, id: String, families: Vec<String>, tagged: bool) -> CmdResult<()> {
-    let mut db = lock(&state);
-    let ids: Vec<String> = db.faces_of_families(&families)?.into_iter().map(|f| f.id).collect();
-    db.set_tagged(&id, &ids, tagged)
+    tag_families(&state, id, &families, tagged)
+}
+
+fn tag_families(state: &AppState, id: String, families: &[String], tagged: bool) -> CmdResult<()> {
+    let tag = current(state).lock().tags()?.into_iter().find(|t| t.id == id).ok_or("Tag not found")?;
+    if tag.rule.is_some() {
+        return Err("A smart tag fills itself".into());
+    }
+    commit_faces(state, families, |faces| Op::TagSet { id, faces, tagged })
 }
 
 // ---------------------------------------------------------------- smart sets
 
 fn validate_smart_set(name: &str, query: &str) -> CmdResult<()> {
-    if name.trim().is_empty() {
-        return Err("The name cannot be empty".into());
-    }
+    required(name)?;
     serde_json::from_str::<serde_json::Value>(query).map_err(|e| format!("Invalid query: {e}"))?;
     Ok(())
 }
@@ -405,20 +435,29 @@ fn validate_smart_set(name: &str, query: &str) -> CmdResult<()> {
 #[tauri::command]
 fn create_smart_set(state: State<AppState>, name: String, query: String) -> CmdResult<String> {
     validate_smart_set(&name, &query)?;
-    let set = SmartSet { id: uuid::Uuid::new_v4().to_string(), name: name.trim().into(), query, created_at: now() };
-    lock(&state).create_smart_set(&set)?;
-    Ok(set.id)
+    let id = uuid::Uuid::new_v4().to_string();
+    commit(&state, Op::SetCreate { id: id.clone(), name: name.trim().into(), query, created_at: now() })?;
+    Ok(id)
 }
 
 #[tauri::command]
 fn update_smart_set(state: State<AppState>, id: String, name: String, query: String) -> CmdResult<()> {
-    validate_smart_set(&name, &query)?;
-    lock(&state).update_smart_set(&id, name.trim(), &query)
+    change_smart_set(&state, id, &name, query)
+}
+
+fn change_smart_set(state: &AppState, id: String, name: &str, query: String) -> CmdResult<()> {
+    validate_smart_set(name, &query)?;
+    let library = current(state);
+    let mut session = library.lock();
+    if !session.smart_sets()?.iter().any(|s| s.id == id) {
+        return Err("Smart set not found".into());
+    }
+    session.commit(vec![Op::SetUpdate { id, name: name.trim().into(), query }])
 }
 
 #[tauri::command]
 fn delete_smart_set(state: State<AppState>, id: String) -> CmdResult<()> {
-    lock(&state).delete_smart_set(&id)
+    commit(&state, Op::SetDelete { id })
 }
 
 // ---------------------------------------------------------------- details
@@ -436,7 +475,7 @@ async fn face_details(app: AppHandle, id: String) -> CmdResult<FaceDetails> {
 // ---------------------------------------------------------------- Google Fonts
 
 fn google_cache(state: &AppState) -> PathBuf {
-    state.fonts_dir.parent().unwrap_or(&state.fonts_dir).join("google-fonts.json")
+    state.data_dir.join("google-fonts.json")
 }
 
 #[tauri::command]
@@ -460,7 +499,11 @@ async fn google_download(app: AppHandle, family: String) -> CmdResult<GoogleDown
         let state = app.state::<AppState>();
         let catalog = google::catalog(&google_cache(&state), false, now())?;
         let entry = catalog.families.iter().find(|f| f.family == family).ok_or("Family not in the Google Fonts catalog")?;
-        let files = google::download(entry, &state.fonts_dir.join("Google Fonts"))?;
+        let library = current(&state);
+        if library.lock().read_only() {
+            return Err("This library is view-only".into());
+        }
+        let files = google::download(entry, &library.fonts_dir().join("Google Fonts"))?;
         let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
         let summary = import_blocking(&state, paths.clone(), false)?;
         Ok(GoogleDownload { summary, paths })
@@ -483,8 +526,15 @@ async fn language_support(app: AppHandle, id: String, samples: Vec<String>) -> C
 /// activated or not, including faces inside .ttc/.otc collections.
 fn serve_font(app: &AppHandle, uri_path: &str) -> Response<Vec<u8>> {
     let not_found = || Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap();
+    let state = app.state::<AppState>();
+    // `<library id>~<face id>`: two copies of a library share their face ids, not their files.
     let id = uri_path.trim_start_matches('/');
-    let Some(face) = lookup_face(&app.state::<AppState>(), id) else {
+    let id = match id.split_once('~') {
+        Some((library, face)) if library == current(&state).id => face,
+        Some(_) => return not_found(),
+        None => id,
+    };
+    let Some(face) = lookup_face(&state, id) else {
         return not_found();
     };
     let Some(bytes) = fonts::map(Path::new(&face.path)).ok().and_then(|d| fonts::face_bytes(&d, face.face_index)) else {
@@ -545,12 +595,7 @@ pub fn run() {
         .register_uri_scheme_protocol("tsfont", |ctx, request| serve_font(ctx.app_handle(), request.uri().path()))
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let fonts_dir = data_dir.join("Fonts");
-            fs::create_dir_all(&fonts_dir)?;
-            let db = Db::open(&data_dir.join("library.sqlite"))?;
-            let machine = MachineDb::open(&data_dir.join("machine.sqlite"))?;
-            move_activation(&db, &machine)?;
-            let state = AppState { db: Mutex::new(db), machine: Mutex::new(machine), fonts_dir, system: RwLock::new(None) };
+            let state = AppState::new(data_dir)?;
             reset_temporary(&state);
             reconcile_with_system(&state);
             app.manage(state);
@@ -607,72 +652,85 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    fn temp_root(kind: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("typeshelf-{kind}-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn content(state: &AppState) -> serde_json::Value {
+        serde_json::to_value(library_blocking(state).unwrap()).unwrap()
+    }
+
     #[test]
-    fn seeds_default_tags_and_collections_once() {
-        let path = std::env::temp_dir().join(format!("typeshelf-seed-{}.sqlite", uuid::Uuid::new_v4()));
-        let db = Db::open(&path).unwrap();
-        assert_eq!(db.collections().unwrap().len(), 4);
-        let tags = db.tags().unwrap();
-        assert_eq!(tags.len(), 7);
-        assert_eq!(tags.iter().filter(|t| t.rule.is_some()).count(), 3);
+    fn new_library_seeds_defaults_once() {
+        let root = temp_root("seed");
+        let state = AppState::for_tests(&root);
+        let session = current(&state);
+        assert_eq!(session.lock().collections().unwrap().len(), 4);
+        let tags = session.lock().tags().unwrap();
+        assert_eq!((tags.len(), tags.iter().filter(|t| t.rule.is_some()).count()), (7, 3));
         for tag in &tags {
             if let Some(rule) = &tag.rule {
                 serde_json::from_str::<serde_json::Value>(rule).expect("valid default rule");
             }
         }
-        db.delete_tag(&tags[0].id).unwrap();
-        drop(db);
+        commit(&state, Op::TagDelete { id: tags[0].id.clone() }).unwrap();
+        drop((session, state));
         // Reopening must not bring back what the user deleted.
-        assert_eq!(Db::open(&path).unwrap().tags().unwrap().len(), 6);
-        let _ = fs::remove_file(&path);
+        assert_eq!(current(&AppState::for_tests(&root)).lock().tags().unwrap().len(), 6);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn upgrades_a_first_release_database() {
-        let path = std::env::temp_dir().join(format!("typeshelf-upgrade-{}.sqlite", uuid::Uuid::new_v4()));
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE face (
-                 id TEXT PRIMARY KEY, path TEXT NOT NULL, face_index INTEGER NOT NULL DEFAULT 0,
-                 ps_name TEXT NOT NULL UNIQUE, family TEXT NOT NULL, style TEXT NOT NULL, full_name TEXT NOT NULL,
-                 weight INTEGER NOT NULL DEFAULT 400, italic INTEGER NOT NULL DEFAULT 0, mono INTEGER NOT NULL DEFAULT 0,
-                 classification TEXT NOT NULL, version TEXT, designer TEXT, manufacturer TEXT, license TEXT, copyright TEXT,
-                 glyph_count INTEGER NOT NULL DEFAULT 0, variable INTEGER NOT NULL DEFAULT 0,
-                 starred INTEGER NOT NULL DEFAULT 0, added_at INTEGER NOT NULL
-             );
-             INSERT INTO face (id, path, ps_name, family, style, full_name, classification, added_at)
-             VALUES ('gone', '/nowhere/gone.ttf', 'Gone', 'Gone', 'Regular', 'Gone', 'sans', 0);
-             PRAGMA user_version = 1;",
-        )
-        .unwrap();
-        drop(conn);
+    fn replay_matches_direct_writes() {
+        let root = temp_root("replay");
+        let state = AppState::for_tests(&root);
+        let col = create_collection_in(&state, "Brand");
+        let set = SetIds::new(&state);
+        commit(&state, Op::CollectionRename { id: col.clone(), name: "Brand 2".into() }).unwrap();
+        change_smart_set(&state, set.0.clone(), "Heavy", r#"{"search":"x"}"#.into()).unwrap();
+        let before = content(&state);
+        drop(state);
+        // The cache is only a cache.
+        fs::remove_dir_all(root.join("Caches")).unwrap();
+        assert_eq!(content(&AppState::for_tests(&root)), before);
+        let _ = fs::remove_dir_all(&root);
+    }
 
-        let mut db = Db::open(&path).unwrap();
-        // Already seeded: upgrading must not add the defaults again.
-        assert!(db.collections().unwrap().is_empty());
-        db.backfill_metrics().unwrap();
-        let face = db.face("gone").unwrap().unwrap();
-        assert_eq!((face.width, face.features.len()), (5, 0));
-        drop(db);
-        assert_eq!(Db::open(&path).unwrap().faces().unwrap().len(), 1);
-        let _ = fs::remove_file(&path);
+    fn create_collection_in(state: &AppState, name: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        commit(state, Op::CollectionCreate { id: id.clone(), name: name.into(), created_at: 1 }).unwrap();
+        id
+    }
+
+    struct SetIds(String);
+
+    impl SetIds {
+        fn new(state: &AppState) -> Self {
+            commit(state, Op::SetCreate { id: "s1".into(), name: "Bold".into(), query: "{}".into(), created_at: 1 }).unwrap();
+            SetIds("s1".into())
+        }
     }
 
     #[test]
-    fn saves_renames_and_deletes_smart_sets() {
-        let path = std::env::temp_dir().join(format!("typeshelf-sets-{}.sqlite", uuid::Uuid::new_v4()));
-        let db = Db::open(&path).unwrap();
-        let set = SmartSet { id: "s1".into(), name: "Bold".into(), query: "{}".into(), created_at: 1 };
-        db.create_smart_set(&set).unwrap();
-        db.update_smart_set("s1", "Heavy", r#"{"search":"x"}"#).unwrap();
-        let sets = db.smart_sets().unwrap();
-        assert_eq!((sets[0].name.as_str(), sets[0].query.as_str()), ("Heavy", r#"{"search":"x"}"#));
-        assert!(db.update_smart_set("missing", "x", "{}").is_err());
-        db.delete_smart_set("s1").unwrap();
-        assert!(db.smart_sets().unwrap().is_empty());
+    fn commands_refuse_invalid_input_before_journaling() {
+        let root = temp_root("refuse");
+        let state = AppState::for_tests(&root);
+        let journal = || {
+            let file = library::journal::files(&current(&state).root).unwrap().remove(0);
+            fs::read_to_string(file).unwrap()
+        };
+        let before = journal();
+        assert!(change_smart_set(&state, "missing".into(), "x", "{}".into()).is_err());
+        assert!(tag_families(&state, "missing".into(), &[], true).is_err());
+        let smart = current(&state).lock().tags().unwrap().into_iter().find(|t| t.rule.is_some()).unwrap();
+        assert!(tag_families(&state, smart.id, &[], true).is_err());
+        assert!(required("  ").is_err());
         assert!(validate_smart_set(" ", "{}").is_err());
         assert!(validate_smart_set("x", "{not json").is_err());
-        let _ = fs::remove_file(&path);
+        assert!(validate_tag("x", "red", &Some("{pas du json".into())).is_err());
+        assert!(validate_tag("x", "fuchsia", &None).is_err());
+        assert_eq!(journal(), before);
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// Imports the fonts listed in TYPESHELF_TEST_FONTS (a folder) into a throwaway
@@ -683,8 +741,9 @@ mod tests {
             eprintln!("TYPESHELF_TEST_FONTS not set: test skipped");
             return;
         };
-        let root = std::env::temp_dir().join(format!("typeshelf-test-{}", uuid::Uuid::new_v4()));
+        let root = temp_root("test");
         let state = AppState::for_tests(&root);
+        let library = current(&state);
 
         let src = source.to_string_lossy().into_owned();
         let first = import_blocking(&state, vec![src.clone()], true).unwrap();
@@ -696,8 +755,8 @@ mod tests {
         assert_eq!(second.imported, 0);
         assert_eq!(second.skipped, first.imported);
 
-        let faces = lock(&state).faces().unwrap();
-        assert!(faces.iter().all(|f| f.path.starts_with(state.fonts_dir.to_str().unwrap())));
+        let faces = library.lock().faces().unwrap();
+        assert!(faces.iter().all(|f| Path::new(&f.path).starts_with(library.fonts_dir())));
         assert!(faces.iter().any(|f| f.variable), "a variable font was expected");
         let collection_faces = faces.iter().filter(|f| f.path.ends_with(".ttc")).count();
         assert!(collection_faces > 1, "the styles of the .ttc must be imported separately");
@@ -724,42 +783,38 @@ mod tests {
 
         // Collections and favourites.
         let family = faces[0].family.clone();
-        let id = uuid::Uuid::new_v4().to_string();
+        let families = std::slice::from_ref(&family);
+        let id = create_collection_in(&state, "Test");
+        commit_faces(&state, families, |faces| Op::CollectionAdd { id: id.clone(), faces }).unwrap();
+        commit_faces(&state, families, |ids| Op::FaceStar { ids, starred: true }).unwrap();
         {
-            let mut db = lock(&state);
-            db.create_collection(&id, "Test", now()).unwrap();
-            let ids: Vec<String> = db.faces_of_families(std::slice::from_ref(&family)).unwrap().into_iter().map(|f| f.id).collect();
-            db.add_to_collection(&id, &ids).unwrap();
-            assert_eq!(db.membership().unwrap()[&id].len(), ids.len());
-            db.set_starred(&family, true).unwrap();
-            assert!(db.faces_of_families(&[family]).unwrap().iter().all(|f| f.starred));
+            let session = library.lock();
+            let members = session.faces_of_families(families).unwrap();
+            assert_eq!(session.membership().unwrap()[&id].len(), members.len());
+            assert!(members.iter().all(|f| f.starred));
         }
 
         // Manual and smart tags.
-        {
-            let mut db = lock(&state);
-            let manual = Tag { id: "t1".into(), name: "Headings".into(), color: "red".into(), rule: None, created_at: now() };
-            db.save_tag(&manual).unwrap();
-            let ids: Vec<String> = faces.iter().take(2).map(|f| f.id.clone()).collect();
-            db.set_tagged("t1", &ids, true).unwrap();
-            assert_eq!(db.tag_membership().unwrap()["t1"].len(), 2);
-            db.set_tagged("t1", &ids[..1], false).unwrap();
-            assert_eq!(db.tag_membership().unwrap()["t1"].len(), 1);
+        let manual = Op::TagSave { id: "t1".into(), name: "Mine".into(), color: "red".into(), rule: None, created_at: now() };
+        commit(&state, manual).unwrap();
+        let ids: Vec<String> = faces.iter().take(2).map(|f| f.id.clone()).collect();
+        let tagged = |tag: &str| library.lock().tag_membership().unwrap().get(tag).map_or(0, Vec::len);
+        commit(&state, Op::TagSet { id: "t1".into(), faces: ids.clone(), tagged: true }).unwrap();
+        assert_eq!(tagged("t1"), 2);
+        commit(&state, Op::TagSet { id: "t1".into(), faces: ids[..1].to_vec(), tagged: false }).unwrap();
+        assert_eq!(tagged("t1"), 1);
 
-            // Turning it into a smart tag clears explicit members and refuses manual tagging.
-            let smart = Tag { rule: Some(r#"{"match":"all","conditions":[]}"#.into()), ..manual };
-            db.save_tag(&smart).unwrap();
-            assert!(!db.tag_membership().unwrap().contains_key("t1"));
-            assert!(db.set_tagged("t1", &ids, true).is_err());
+        // Turning it into a smart tag clears explicit members and refuses manual tagging.
+        let rule = Some(r#"{"match":"all","conditions":[]}"#.to_string());
+        commit(&state, Op::TagSave { id: "t1".into(), name: "Mine".into(), color: "red".into(), rule, created_at: now() }).unwrap();
+        assert_eq!(tagged("t1"), 0);
+        assert!(tag_families(&state, "t1".into(), families, true).is_err());
 
-            // Deleting a face removes it from manual tags (foreign key cascade).
-            db.save_tag(&Tag { id: "t2".into(), rule: None, ..smart }).unwrap();
-            db.set_tagged("t2", &ids, true).unwrap();
-            db.delete_faces(&ids[..1]).unwrap();
-            assert_eq!(db.tag_membership().unwrap()["t2"].len(), ids.len() - 1);
-            assert!(validate_tag("x", "red", &Some("{pas du json".into())).is_err());
-            assert!(validate_tag("x", "fuchsia", &None).is_err());
-        }
+        // Deleting a face removes it from manual tags (foreign key cascade).
+        commit(&state, Op::TagSave { id: "t2".into(), name: "Other".into(), color: "red".into(), rule: None, created_at: now() }).unwrap();
+        commit(&state, Op::TagSet { id: "t2".into(), faces: ids.clone(), tagged: true }).unwrap();
+        commit(&state, Op::FaceRemove { ids: ids[..1].to_vec() }).unwrap();
+        assert_eq!(tagged("t2"), ids.len() - 1);
 
         // The tsfont protocol extracts a standalone font for each face of the collection.
         for face in faces.iter().filter(|f| f.path.ends_with(".ttc")) {

@@ -1,8 +1,9 @@
 //! Duplicates and conflicts: every file that carries the same font (PostScript name), and the
 //! only way to remove the extra ones. Nothing is deleted unless the interface asks for it.
 
+use crate::library::journal::Op;
 use crate::model::{Face, Scope};
-use crate::{activation, fonts, invalidate_system, lock, machine, system_scan, AppState};
+use crate::{activation, current, fonts, invalidate_system, machine, system_scan, AppState};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -89,7 +90,7 @@ pub struct Insights {
 
 pub fn collect(state: &AppState, roots: &Roots) -> Result<Insights, String> {
     let scan = system_scan(state);
-    let library = lock(state).faces()?;
+    let library = current(state).lock().faces()?;
     let activation = machine(state).activation()?;
     Ok(compute(&library, &activation, &scan.all, roots))
 }
@@ -197,9 +198,10 @@ pub fn trash_copies(
     let mut errors = Vec::new();
     let mut removed_installed = false;
     {
-        let mut db = lock(state);
+        let open = current(state);
+        let mut session = open.lock();
         let machine = machine(state);
-        let library = db.faces()?;
+        let library = session.faces()?;
         for path in &requested {
             let file = Path::new(path);
             let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -215,6 +217,11 @@ pub fn trash_copies(
                 errors.push(format!("{name}: this file cannot be moved to the Trash"));
                 continue;
             }
+            // Removing it would change the library: refuse before touching the file.
+            if session.read_only() && (location == Location::Library || library.iter().any(|f| &f.path == path)) {
+                errors.push(format!("{name}: this library is view-only"));
+                continue;
+            }
             if let Err(e) = activation::deactivate(file, machine.scope_of(path)?) {
                 errors.push(e);
                 continue;
@@ -226,16 +233,20 @@ pub fn trash_copies(
             }
             removed_installed |= location == Location::User;
 
+            let mut ops = Vec::new();
             let mut dropped = Vec::new();
             for face in library.iter().filter(|f| &f.path == path) {
                 let other =
                     scan.all.iter().find(|c| c.ps_name == face.ps_name && !requested.contains(&c.path) && Path::new(&c.path).exists());
                 match other {
-                    Some(copy) => db.repoint_face(&face.id, copy)?,
+                    Some(copy) => ops.push(session.repoint_op(&face.id, copy)),
                     None => dropped.push(face.id.clone()),
                 }
             }
-            db.delete_faces(&dropped)?;
+            if !dropped.is_empty() {
+                ops.push(Op::FaceRemove { ids: dropped });
+            }
+            session.commit(ops)?;
         }
     }
     activation::finish_batch();
@@ -296,6 +307,8 @@ mod tests {
                 features: Vec::new(),
                 starred: false,
                 added_at: 0,
+                available: true,
+                imported_on: None,
             }
         }
     }
@@ -361,9 +374,10 @@ mod tests {
 
         let state = AppState::for_tests(&sandbox.root.join("state"));
         {
-            let mut db = lock(&state);
-            db.insert_faces(&[kept.clone(), gone.clone()]).unwrap();
-            db.set_starred("A", true).unwrap();
+            let library = current(&state);
+            let mut session = library.lock();
+            session.add_faces(&[kept.clone(), gone.clone()]).unwrap();
+            session.commit(vec![Op::FaceStar { ids: vec![kept.id.clone()], starred: true }]).unwrap();
         }
         *state.system.write().unwrap() = Some(Arc::new(SystemScan::new(vec![installed.clone()])));
 
@@ -374,7 +388,7 @@ mod tests {
         assert!(!Path::new(&kept.path).exists() && !Path::new(&gone.path).exists());
 
         // "A" now points at the installed copy and is still a favourite; "B" had no other copy.
-        let faces = lock(&state).faces().unwrap();
+        let faces = current(&state).lock().faces().unwrap();
         assert_eq!(faces.len(), 1);
         assert_eq!((faces[0].id.as_str(), faces[0].path.as_str(), faces[0].starred), (kept.id.as_str(), installed.path.as_str(), true));
     }

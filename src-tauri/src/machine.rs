@@ -116,15 +116,15 @@ impl MachineDb {
     }
 
     /// Records that a library was opened at `path`, keeping its device id if it is known.
-    pub fn remember(&self, id: &str, path: &Path, now: i64) -> R<KnownLibrary> {
+    pub fn remember(&self, id: &str, path: &Path, device_id: &str, now: i64) -> R<()> {
         self.conn
             .execute(
                 "INSERT INTO library (id, path, device_id, last_opened) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(id) DO UPDATE SET path = excluded.path, last_opened = excluded.last_opened",
-                params![id, path.to_string_lossy(), uuid::Uuid::new_v4().to_string(), now],
+                params![id, path.to_string_lossy(), device_id, now],
             )
-            .map_err(err)?;
-        self.library(id)?.ok_or_else(|| "Library not found".into())
+            .map(|_| ())
+            .map_err(err)
     }
 
     pub fn forget(&self, id: &str) -> R<()> {
@@ -159,11 +159,12 @@ mod tests {
         assert_eq!(db.setting("x").unwrap().as_deref(), Some("2"));
         assert!(!db.device_name().unwrap().is_empty());
 
-        let first = db.remember("l1", Path::new("/one"), 1).unwrap();
-        db.remember("l2", Path::new("/two"), 2).unwrap();
+        db.remember("l1", Path::new("/one"), "d1", 1).unwrap();
+        db.remember("l2", Path::new("/two"), "d2", 2).unwrap();
         // Reopening elsewhere keeps the device id.
-        let again = db.remember("l1", Path::new("/moved"), 3).unwrap();
-        assert_eq!((again.device_id, again.path), (first.device_id, PathBuf::from("/moved")));
+        db.remember("l1", Path::new("/moved"), "other", 3).unwrap();
+        let again = db.library("l1").unwrap().unwrap();
+        assert_eq!((again.device_id.as_str(), again.path), ("d1", PathBuf::from("/moved")));
         assert_eq!(db.libraries().unwrap().iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["l1", "l2"]);
         db.forget("l1").unwrap();
         assert!(db.library("l1").unwrap().is_none());

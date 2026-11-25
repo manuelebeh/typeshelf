@@ -6,7 +6,7 @@
 //! a custom header, which browsers only send after a CORS preflight that is never granted.
 
 use crate::model::Scope;
-use crate::{activation, fonts, google, google_cache, import_blocking, lock, machine, now, system_scan, AppState};
+use crate::{activation, current, fonts, google, google_cache, import_blocking, machine, now, system_scan, AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -319,7 +319,7 @@ fn os_has(name: &str, system: &HashSet<&str>) -> bool {
 pub fn font_status(state: &AppState, names: &[String]) -> Vec<FontStatus> {
     let scan = system_scan(state);
     let system: HashSet<&str> = scan.unique.iter().map(|f| f.ps_name.as_str()).collect();
-    let library = lock(state).faces().unwrap_or_default();
+    let library = current(state).lock().faces().unwrap_or_default();
     let machine = machine(state);
     names
         .iter()
@@ -354,7 +354,7 @@ pub fn activate_fonts(state: &AppState, names: &[String], scope: Scope, google: 
     let mut to_activate: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut missing: Vec<String> = Vec::new();
 
-    let library = lock(state).faces().unwrap_or_default();
+    let library = current(state).lock().faces().unwrap_or_default();
     for name in &wanted {
         let face = library.iter().find(|f| &f.ps_name == name).or_else(|| library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name)));
         match face {
@@ -415,7 +415,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
     }
     for (family, names) in groups {
         let entry = catalog.families.iter().find(|f| f.family == family).expect("family from the catalog");
-        let fetched = google::download(entry, &state.fonts_dir.join("Google Fonts")).and_then(|files| {
+        let fetched = google::download(entry, &current(state).fonts_dir().join("Google Fonts")).and_then(|files| {
             let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
             import_blocking(state, paths.clone(), false)?;
             Ok(paths)
@@ -433,7 +433,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
             }
         };
         let errors: Vec<String> = paths.iter().filter_map(|p| activate_path(state, p, scope).err()).collect();
-        let library = lock(state).faces().unwrap_or_default();
+        let library = current(state).lock().faces().unwrap_or_default();
         let known: BTreeSet<&str> = library.iter().filter(|f| paths.contains(&f.path)).map(|f| f.ps_name.as_str()).collect();
         for name in names {
             let found = known.contains(name.as_str()) || known.iter().any(|k| k.eq_ignore_ascii_case(&name));
