@@ -1876,7 +1876,7 @@ async function showDesignMenu(button: HTMLElement) {
           { label: t("Preview the selected text of"), header: true },
           ...apps.map((a) => ({ label: a.document ? `${a.name} · ${a.document}` : a.name, action: () => requestSelection(a.name) })),
         ]
-      : [{ label: t("Open the Typeshelf panel in Photoshop or Illustrator"), header: true }],
+      : [{ label: t("Open a design app with the Typeshelf plugin"), header: true }],
   );
 }
 

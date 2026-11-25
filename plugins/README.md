@@ -4,17 +4,19 @@ Panels that, when a document opens, list the fonts it uses and ask Typeshelf to 
 missing ones: from the library, or downloaded from Google Fonts when the family exists there.
 Typeshelf must be running.
 
-The Photoshop and Illustrator panels also work the other way round, from Typeshelf:
+The Photoshop, Illustrator, After Effects and Sketch plugins also work the other way round, from
+Typeshelf:
 
 - **Apply a font**: right-click a family or a style in Typeshelf, *Apply in Photoshop*. The font is
   activated until Typeshelf quits if need be, then set on the selected text, as one undo step.
 - **Preview in your design**: the toolbar button in Typeshelf, or *Preview in Typeshelf* in the
-  panel, shows the selected text in every family with its color and letter spacing (not its size, nor
+  panel (in Sketch, in **Plugins ▸ Typeshelf**), shows the selected text in every family with its color and letter spacing (not its size, nor
   the rest of the artboard). The document only changes with *Apply* or a double-click.
 
 Photoshop applies to whole text layers (the ones selected in the Layers panel), even while editing a
 few characters. Illustrator applies to the highlighted range, or to the whole of each selected text
-object. InDesign, After Effects, Sketch and Figma do not offer this yet.
+object. After Effects applies to the text layers selected in the active composition (every Source
+Text keyframe of each), Sketch to the selected text layers. InDesign and Figma do not offer this yet.
 
 The panels follow the system language (English, or French on a French system).
 
@@ -106,8 +108,10 @@ ln -s "$PWD/plugins/sketch/Typeshelf.sketchplugin" ~/Library/Application\ Suppor
 
 (or double-click `Typeshelf.sketchplugin`, which copies it). Without a webview library, Sketch has
 no permanent panel: the plugin acts on its own when a document opens and answers with a message at
-the bottom of the window. **Plugins ▸ Typeshelf** offers *Activate Missing Fonts* and *Settings…*
-(automatic activation, Google Fonts, duration).
+the bottom of the window. **Plugins ▸ Typeshelf** offers *Activate Missing Fonts*, *Preview in
+Typeshelf* and *Settings…* (automatic activation, Google Fonts, duration). From Sketch's launch on,
+or from the first document opened after installing, the plugin asks Typeshelf every second whether
+there is something to do.
 
 ### Figma
 
@@ -135,7 +139,7 @@ of `system` (installed on the system), `active` (already active), `activated` (a
 request, `source` = `library` or `google`), `missing`, `error`. `scope` is `temporary` (until
 Typeshelf quits, the default) or `persistent`.
 
-A plugin cannot be called, so the panels that can apply a font poll every second:
+A plugin cannot be called, so the plugins that can apply a font poll every second:
 
 ```http
 POST /v1/bridge/poll       { "document?": "poster.psd", "can": ["apply", "selection"] }
@@ -187,6 +191,12 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   the fonts and `isSubstitute` the missing ones; before 24.5, the panel reads the font of each
   text layer and Typeshelf decides. Once the font is activated, After Effects puts the real one back
   in place of its substitute by itself (within a few seconds) and marks the project as modified.
+  Scripts cannot read the highlighted characters, so applying works on whole layers. Before
+  changing anything the panel asks each font whether it has the letters of the text
+  (`FontObject.hasGlyphsFor`, After Effects 25.1 and later); older versions read the font back and
+  undo. Under an expression, `value` is what the expression returns, even before expressions
+  (`valueAtTime(t, true)`): the panel turns the expression off while it writes, so the layer keeps
+  its own text.
 - Sketch (tried in Sketch 2026.1): a missing font that is not embedded in the file is replaced in
   memory by a system font, and only the document data keeps its name (`fontNames`, outside the
   documented API; failing that, the plugin reads the fonts of the text). Fonts embedded in the file
@@ -194,6 +204,10 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   after opening: the plugin therefore reopens the document, only if it has no unsaved changes
   (Sketch saves when closing), at most once a minute. Otherwise it asks to reopen it. Never call
   `replaceMissingFontsIfNecessary`: it permanently replaces the missing font.
+  The loop that asks Typeshelf for commands keeps running while Sketch is in the background; an
+  updated plugin only takes over after a restart of Sketch. Applying changes the font run by run
+  (`setFontPostscriptName:` would give every run the size of the first), after checking that the
+  font has the letters of the text. Sketch records the undo step by itself.
 - InDesign: written from the scripting reference and not tried in InDesign (it was not installed
   where the plugin was written). `Document.fonts` lists every font of the document with a
   `FontStatus` (installed, not available, substituted), which gives the missing ones directly. The panel

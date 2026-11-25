@@ -464,7 +464,7 @@ export const fr: Record<string, string> = {
   "This library is shared, so imported fonts are always copied into it.": "Cette bibliothèque est partagée : les polices importées y sont toujours copiées.",
   "Preview in your design": "Aperçu dans votre design",
   "Preview the selected text of": "Prévisualiser le texte sélectionné de",
-  "Open the Typeshelf panel in Photoshop or Illustrator": "Ouvrez le panneau Typeshelf dans Photoshop ou Illustrator",
+  "Open a design app with the Typeshelf plugin": "Ouvrez une application de création dotée du plugin Typeshelf",
   "Preview from {app}": "Aperçu depuis {app}",
   "Current": "Actuelle",
   "Refresh": "Actualiser",
