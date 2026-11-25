@@ -16,6 +16,7 @@ const face = (path: string, family: string, style: string, extra: Partial<Face> 
   style,
   fullName: `${family} ${style}`,
   weight: 400,
+  width: 5,
   italic: false,
   mono: false,
   classification: "serif",
@@ -26,19 +27,20 @@ const face = (path: string, family: string, style: string, extra: Partial<Face> 
   copyright: null,
   glyphCount: 600,
   variable: false,
+  features: ["kern", "liga"],
   starred: false,
   addedAt: Date.now() / 1000 - 3600,
   ...extra,
 });
 
 const faces: Face[] = [
-  face(`${SUP}/Georgia.ttf`, "Georgia", "Regular", { designer: "Matthew Carter" }),
+  face(`${SUP}/Georgia.ttf`, "Georgia", "Regular", { designer: "Matthew Carter", features: ["kern", "liga", "lnum", "onum", "pnum", "tnum"] }),
   face(`${SUP}/Georgia Italic.ttf`, "Georgia", "Italic", { italic: true }),
-  face(`${SUP}/Georgia Bold.ttf`, "Georgia", "Bold", { weight: 700 }),
+  face(`${SUP}/Georgia Bold.ttf`, "Georgia", "Bold", { weight: 700, features: ["kern", "liga", "onum"] }),
   face(`${SUP}/Courier New.ttf`, "Courier New", "Regular", { mono: true, classification: "mono" }),
-  face(`${SUP}/Skia.ttf`, "Skia", "Regular", { variable: true, classification: "sans", starred: true }),
+  face(`${SUP}/Skia.ttf`, "Skia", "Regular", { variable: true, classification: "sans", starred: true, features: ["kern", "liga", "smcp", "ss01", "tnum"] }),
   face(`${SUP}/Trebuchet MS.ttf`, "Trebuchet MS", "Regular", { classification: "sans" }),
-  face(`${SUP}/Zapfino.ttf`, "Zapfino", "Regular", { classification: "script", addedAt: 0 }),
+  face(`${SUP}/Zapfino.ttf`, "Zapfino", "Regular", { classification: "script", addedAt: 0, width: 7, features: ["calt", "kern", "liga", "salt", "swsh"] }),
 ];
 
 const systemFaces: Face[] = [
@@ -47,7 +49,7 @@ const systemFaces: Face[] = [
   face(`${SUP}/Arial Italic.ttf`, "Arial", "Italic", { classification: "sans", italic: true }),
   face(`${SUP}/Verdana.ttf`, "Verdana", "Regular", { classification: "sans" }),
   face(`${SUP}/Times New Roman.ttf`, "Times New Roman", "Regular"),
-  face(`${SUP}/Impact.ttf`, "Impact", "Regular", { classification: "display", weight: 900 }),
+  face(`${SUP}/Impact.ttf`, "Impact", "Regular", { classification: "display", weight: 900, width: 3, features: ["kern"] }),
   face(`${SUP}/Andale Mono.ttf`, "Andale Mono", "Regular", { classification: "mono", mono: true }),
   face(`${SUP}/Apple Chancery.ttf`, "Apple Chancery", "Chancery", { classification: "script" }),
 ].map((f, i) => ({ ...f, id: `sys-demo-${i}`, addedAt: 1_700_000_000 + i * 86400 }));

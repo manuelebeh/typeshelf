@@ -19,6 +19,19 @@ import {
   styleLabel,
   type GoogleSort,
 } from "./google";
+import {
+  emptyFilter,
+  filterCount as countFilters,
+  matchesSearch,
+  passesFilter,
+  sameRange,
+  WEIGHT_PRESETS,
+  WEIGHT_SCALE,
+  WIDTH_PRESETS,
+  WIDTH_SCALE,
+  type Filter,
+  type Range,
+} from "./filters";
 import { hydrateIcons, icon } from "./icons";
 import { dateLocale, N_, setLanguage, t, tn, translateStatic, type Language } from "./i18n";
 import { fileName, selectByRule, selectionImpact, versionNumber, type SelectRule } from "./insights";
@@ -95,16 +108,18 @@ const featureNames = (): Record<string, string> => ({
   mark: t("Mark positioning"),
   mkmk: t("Mark to mark positioning"),
 });
-const DEFAULT_ON = new Set(["liga", "calt", "kern", "ccmp", "locl", "mark", "mkmk", "clig", "rlig"]);
+const featureLabel = (tag: string): string =>
+  featureNames()[tag] ??
+  (/^ss\d\d$/.test(tag)
+    ? t("Stylistic set {n}", { n: +tag.slice(2) })
+    : /^cv\d\d$/.test(tag)
+      ? t("Character variant {n}", { n: +tag.slice(2) })
+      : tag);
 
-const emptyFilter = () => ({
-  status: "any" as "any" | "active" | "temporary" | "inactive",
-  source: "any" as "any" | "system" | "library",
-  classes: new Set<string>(),
-  variable: false,
-  mono: false,
-  italic: false,
-});
+/** Share of each OS/2 width class, in percent of the normal width. */
+const WIDTH_PERCENT = [50, 62.5, 75, 87.5, 100, 112.5, 125, 150, 200];
+
+const DEFAULT_ON = new Set(["liga", "calt", "kern", "ccmp", "locl", "mark", "mkmk", "clig", "rlig"]);
 
 const state = {
   lib: null as Library | null,
@@ -117,6 +132,9 @@ const state = {
   search: "",
   filter: emptyFilter(),
   showFilters: false,
+  /** Every OpenType tag found, with the number of families offering it. */
+  featureCounts: new Map<string, number>(),
+  allFeatures: false,
   sort: "name" as Sort,
   expanded: new Set<string>(),
   previewText: "",
@@ -297,6 +315,12 @@ function rebuild() {
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+  state.featureCounts = new Map();
+  for (const fam of state.families) {
+    for (const tag of new Set(fam.faces.flatMap((f) => f.features))) {
+      state.featureCounts.set(tag, (state.featureCounts.get(tag) ?? 0) + 1);
+    }
+  }
   if (state.selected && !state.selected.startsWith("g:") && !familyByKey(state.selected)) state.selected = null;
 }
 
@@ -374,36 +398,13 @@ const countRule = (rule: Rule) => state.families.filter((f) => matchesRule(rule,
 
 const isGoogle = () => state.sidebar === "google";
 
-function filterCount(): number {
-  if (isGoogle()) return googleFilterCount(state.googleFilter);
-  const f = state.filter;
-  return (
-    Number(f.status !== "any") + Number(f.source !== "any") + f.classes.size + Number(f.variable) + Number(f.mono) + Number(f.italic)
-  );
-}
+const filterCount = (): number => (isGoogle() ? googleFilterCount(state.googleFilter) : countFilters(state.filter));
 
-function passesFilter(fam: Family): boolean {
-  const f = state.filter;
-  if (f.status !== "any" && !matches(fam, f.status)) return false;
-  if (f.source === "system" && !fam.system) return false;
-  if (f.source === "library" && fam.system) return false;
-  if (f.classes.size && !f.classes.has(fam.classification)) return false;
-  if (f.variable && !fam.variable) return false;
-  if (f.mono && !fam.faces.some((x) => x.mono)) return false;
-  if (f.italic && !fam.faces.some((x) => x.italic)) return false;
-  return true;
-}
+const passes = (fam: Family, filter: Filter) => passesFilter(filter, fam, (status) => matches(fam, status));
 
 function visibleFamilies(): Family[] {
-  const q = state.search.trim().toLowerCase();
   const list = state.families.filter(
-    (fam) =>
-      matches(fam, state.sidebar) &&
-      passesFilter(fam) &&
-      (!q ||
-        fam.faces.some((f) =>
-          [f.family, f.style, f.psName, f.designer ?? "", f.manufacturer ?? ""].some((v) => v.toLowerCase().includes(q)),
-        )),
+    (fam) => matches(fam, state.sidebar) && passes(fam, state.filter) && matchesSearch(fam.faces, state.search),
   );
   if (state.sort === "name-desc") list.sort((a, b) => b.name.localeCompare(a.name, undefined, { sensitivity: "base", numeric: true }));
   else if (state.sort === "recent") list.sort((a, b) => addedAt(b) - addedAt(a));
@@ -937,8 +938,8 @@ function renderFilterBar() {
     `<div class="segmented small-seg">${options
       .map(([v, l]) => `<button type="button" data-filter="${name}" data-value="${v}" class="${value === v ? "on" : ""}">${l}</button>`)
       .join("")}</div>`;
-  const chip = (name: string, value: string, label: string, on: boolean) =>
-    `<button type="button" class="filter-chip${on ? " on" : ""}" data-filter="${name}" data-value="${value}">${esc(label)}</button>`;
+  const chip = (name: string, value: string, label: string, on: boolean, title = "") =>
+    `<button type="button" class="filter-chip${on ? " on" : ""}" data-filter="${name}" data-value="${esc(value)}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
   bar.innerHTML = `
     <div class="filter-group"><span class="filter-label">${t("Status")}</span>${seg("status", f.status, [
       ["any", t("All")],
@@ -957,12 +958,89 @@ function renderFilterBar() {
         .map(([k, l]) => chip("class", k, l, f.classes.has(k)))
         .join("")}
     </div>
-    <div class="filter-group"><span class="filter-label">${t("Features")}</span>
+    <div class="filter-group"><span class="filter-label">${t("Properties")}</span>
       ${chip("variable", "1", t("Variable fonts"), f.variable)}
       ${chip("mono", "1", t("Monospaced"), f.mono)}
       ${chip("italic", "1", t("With italic"), f.italic)}
     </div>
+    ${rangeGroup("weight", t("Weight"), f.weight, WEIGHT_SCALE, 100, [
+      ["light", t("Light")],
+      ["regular", t("Regular")],
+      ["bold", t("Bold")],
+    ])}
+    ${rangeGroup("width", t("Width"), f.width, WIDTH_SCALE, 1, [
+      ["narrow", t("Narrow")],
+      ["normal", t("Normal")],
+      ["wide", t("Wide")],
+    ])}
+    ${featureGroup(chip)}
     ${n ? `<button type="button" class="link" data-filter="reset">${t("Reset")}</button>` : ""}`;
+}
+
+type RangeName = "weight" | "width";
+
+const rangePresets: Record<RangeName, Record<string, Range>> = { weight: WEIGHT_PRESETS, width: WIDTH_PRESETS };
+
+function rangeText(name: RangeName, value: Range): string {
+  if (sameRange(value, name === "weight" ? WEIGHT_SCALE : WIDTH_SCALE)) return t("All");
+  const [from, to] = value.map((v) => (name === "width" ? `${WIDTH_PERCENT[v - 1]}%` : String(v)));
+  return from === to ? from : `${from} – ${to}`;
+}
+
+function rangeGroup(name: RangeName, label: string, value: Range, scale: Range, step: number, presets: [string, string][]) {
+  const input = (end: 0 | 1, hint: string) =>
+    `<input type="range" data-range="${name}" data-end="${end}" min="${scale[0]}" max="${scale[1]}" step="${step}" value="${value[end]}" aria-label="${esc(`${label}: ${hint}`)}">`;
+  return `<div class="filter-group"><span class="filter-label">${esc(label)}</span>
+    <div class="range-dual" style="${rangeStyle(value, scale)}">${input(0, t("minimum"))}${input(1, t("maximum"))}</div>
+    <span class="range-value" data-range-value="${name}">${esc(rangeText(name, value))}</span>
+    ${presets
+      .map(
+        ([key, text]) =>
+          `<button type="button" class="filter-chip${sameRange(value, rangePresets[name][key]) ? " on" : ""}" data-filter="${name}" data-value="${key}">${esc(text)}</button>`,
+      )
+      .join("")}
+  </div>`;
+}
+
+const rangeStyle = (value: Range, [min, max]: Range) =>
+  `--from:${((value[0] - min) / (max - min)) * 100}%;--to:${((value[1] - min) / (max - min)) * 100}%`;
+
+const FEATURES_SHOWN = 12;
+
+/** Features a designer picks come first; the layout plumbing most fonts carry comes last. */
+function featureGroup(chip: (name: string, value: string, label: string, on: boolean, title?: string) => string) {
+  const selected = state.filter.features;
+  const rank = (tag: string) => (DEFAULT_ON.has(tag) ? 2 : featureNames()[tag] ? 0 : 1);
+  const tags = [...new Set([...state.featureCounts.keys(), ...selected])].sort(
+    (a, b) => rank(a) - rank(b) || (state.featureCounts.get(b) ?? 0) - (state.featureCounts.get(a) ?? 0) || a.localeCompare(b),
+  );
+  if (!tags.length) return "";
+  const shown = state.allFeatures ? tags : tags.filter((tag, i) => i < FEATURES_SHOWN || selected.has(tag));
+  return `<div class="filter-group filter-features"><span class="filter-label">OpenType</span>
+    ${shown
+      .map((tag) => {
+        const name = featureLabel(tag);
+        const count = state.featureCounts.get(tag) ?? 0;
+        return chip("feature", tag, name === tag ? tag : `${name} · ${tag}`, selected.has(tag), tn(count, "{n} family", "{n} families"));
+      })
+      .join("")}
+    ${tags.length > FEATURES_SHOWN ? `<button type="button" class="link" data-filter="allFeatures">${state.allFeatures ? t("Fewer") : t("More…")}</button>` : ""}
+  </div>`;
+}
+
+/** Sliders update in place while they move: redrawing the bar would drop the drag. */
+function applyRange(input: HTMLInputElement) {
+  const name = input.dataset.range as RangeName;
+  const end = Number(input.dataset.end) as 0 | 1;
+  const value = state.filter[name];
+  value[end] = Number(input.value);
+  // The two thumbs push each other instead of crossing.
+  const other = end === 0 ? 1 : 0;
+  value[other] = end === 0 ? Math.max(value[0], value[1]) : Math.min(value[0], value[1]);
+  const group = input.parentElement!;
+  group.querySelector<HTMLInputElement>(`[data-end="${other}"]`)!.value = String(value[other]);
+  group.setAttribute("style", rangeStyle(value, name === "weight" ? WEIGHT_SCALE : WIDTH_SCALE));
+  $(`[data-range-value="${name}"]`).textContent = rangeText(name, value);
 }
 
 function renderGoogleFilterBar(bar: HTMLElement, n: number) {
@@ -1707,9 +1785,7 @@ function renderTab(fam: Family, face: Face): string {
           ${details.features
             .map((tag) => {
               const on = state.features.get(tag) ?? DEFAULT_ON.has(tag);
-              const label =
-                featureNames()[tag] ??
-                (/^ss\d\d$/.test(tag) ? t("Stylistic set {n}", { n: +tag.slice(2) }) : /^cv\d\d$/.test(tag) ? t("Character variant {n}", { n: +tag.slice(2) }) : tag);
+              const label = featureLabel(tag);
               return `<div class="feature"><button type="button" class="switch${on ? " on" : ""}" data-feature="${esc(tag)}" role="switch" aria-checked="${on}" aria-label="${esc(label)}"><span></span></button>
                 <span>${esc(label)}</span><span class="mono muted">${esc(tag)}</span></div>`;
             })
@@ -1908,6 +1984,12 @@ function applyFilter(name: string, value: string) {
   else if (name === "source") f.source = value as typeof f.source;
   else if (name === "class") f.classes.has(value) ? f.classes.delete(value) : f.classes.add(value);
   else if (name === "variable" || name === "mono" || name === "italic") f[name] = !f[name];
+  else if (name === "weight" || name === "width") {
+    // A preset clicked again goes back to the whole scale.
+    const preset = rangePresets[name][value];
+    f[name] = sameRange(f[name], preset) ? [...(name === "weight" ? WEIGHT_SCALE : WIDTH_SCALE)] : [...preset];
+  } else if (name === "feature") f.features.has(value) ? f.features.delete(value) : f.features.add(value);
+  else if (name === "allFeatures") state.allFeatures = !state.allFeatures;
   renderList();
 }
 
@@ -2073,6 +2155,16 @@ function wire() {
     if (g) return applyGoogleFilter(g.dataset.gfilter!, g.dataset.value ?? "");
     const el = target.closest<HTMLElement>("[data-filter]");
     if (el) applyFilter(el.dataset.filter!, el.dataset.value ?? "");
+  });
+  $("#filter-bar").addEventListener("input", (e) => {
+    const input = e.target as HTMLInputElement;
+    if (input.dataset.range) applyRange(input);
+  });
+  $("#filter-bar").addEventListener("change", (e) => {
+    const { range, end } = (e.target as HTMLInputElement).dataset;
+    if (!range) return;
+    renderList();
+    $(`#filter-bar [data-range="${range}"][data-end="${end}"]`).focus(); // keep the arrow keys working
   });
   $("#filter-button").addEventListener("click", () => {
     state.showFilters = !state.showFilters;

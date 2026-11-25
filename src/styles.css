@@ -637,6 +637,30 @@ dialog.settings { width: 600px; padding: 0; overflow: hidden; }
 .filter-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
 .small-seg button { padding: 2px 9px; font-size: 12px; }
 .segmented button.on { background: var(--selected); color: var(--text); }
+.range-dual { position: relative; width: 140px; height: 20px; }
+.range-dual::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--line-strong) var(--from), var(--accent) var(--from) var(--to), var(--line-strong) var(--to));
+}
+.range-dual input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  background: none;
+  pointer-events: none;
+}
+.range-dual input::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); background: var(--card); pointer-events: auto; cursor: pointer; }
+.range-dual input::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); background: var(--card); pointer-events: auto; cursor: pointer; }
+.range-value { min-width: 80px; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.filter-features button.link { margin-left: 0; }
 button.link { border: none; background: transparent; color: var(--accent); padding: 2px 4px; margin-left: auto; }
 button.link:hover { background: transparent; text-decoration: underline; }
 

@@ -11,6 +11,8 @@ export interface Face {
   style: string;
   fullName: string;
   weight: number;
+  /** usWidthClass, 1 to 9. */
+  width: number;
   italic: boolean;
   mono: boolean;
   classification: string;
@@ -21,6 +23,8 @@ export interface Face {
   copyright: string | null;
   glyphCount: number;
   variable: boolean;
+  /** GSUB and GPOS feature tags. */
+  features: string[];
   starred: boolean;
   addedAt: number;
 }
