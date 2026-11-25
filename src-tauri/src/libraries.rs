@@ -101,6 +101,7 @@ pub fn forget(state: &AppState, id: &str) -> CmdResult<()> {
     }
     machine(state).forget(id)?;
     let _ = std::fs::remove_file(manage::cache_path(&state.data_dir, id));
+    let _ = std::fs::remove_file(manage::head_path(&state.data_dir, id));
     Ok(())
 }
 

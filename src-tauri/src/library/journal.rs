@@ -209,6 +209,12 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+/// Whether a sync service still keeps a journal as a placeholder (iCloud: `.name.jsonl.icloud`).
+pub fn pending(root: &Path) -> bool {
+    fs::read_dir(root.join(FOLDER))
+        .is_ok_and(|entries| entries.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".jsonl.icloud")))
+}
+
 /// Adds events at the end of a journal and flushes them to the disk.
 pub fn append(path: &Path, events: &[Event]) -> Result<(), String> {
     let fail = |e: std::io::Error| format!("{}: {e}", path.display());

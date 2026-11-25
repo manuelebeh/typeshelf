@@ -12,6 +12,10 @@ type R<T> = Result<T, String>;
 
 pub const DEFAULT_NAME: &str = "Typeshelf";
 
+pub fn head_path(data_dir: &Path, id: &str) -> PathBuf {
+    data_dir.join("Heads").join(id)
+}
+
 pub fn cache_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("Caches").join(format!("{id}.sqlite"))
 }
@@ -27,8 +31,10 @@ pub fn open_at(data_dir: &Path, machine: &MachineDb, root: &Path, now: i64) -> R
     let device_id = machine.library(&id)?.map_or_else(|| uuid::Uuid::new_v4().to_string(), |k| k.device_id);
     let device_name = machine.device_name()?;
     let cache = cache_path(data_dir, &id);
-    let library = OpenLibrary::open(root, &Opener { device_id: &device_id, device_name: &device_name, cache: &cache })?;
+    let head = head_path(data_dir, &id);
+    let library = OpenLibrary::open(root, &Opener { device_id: &device_id, device_name: &device_name, cache: &cache, head: &head })?;
     machine.remember(&library.id, root, &device_id, now)?;
+    machine.set_device(&library.id, library.lock().device_id())?;
     Ok(library)
 }
 
