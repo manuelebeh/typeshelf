@@ -174,15 +174,13 @@ pub struct Journal {
     pub events: Vec<Event>,
     /// Some lines are changes a newer Typeshelf wrote.
     pub newer: bool,
-    /// Bytes of the complete lines.
-    pub bytes: u64,
 }
 
 /// Reads complete lines only: a last line without its newline is still being written.
 pub fn read(path: &Path) -> Result<Journal, String> {
     let data = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let end = data.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    let mut journal = Journal { bytes: end as u64, ..Journal::default() };
+    let mut journal = Journal::default();
     for line in data[..end].split(|&b| b == b'\n') {
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
             continue;
@@ -211,8 +209,8 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// Adds events at the end of a journal and flushes them to the disk. Returns the new length.
-pub fn append(path: &Path, events: &[Event]) -> Result<u64, String> {
+/// Adds events at the end of a journal and flushes them to the disk.
+pub fn append(path: &Path, events: &[Event]) -> Result<(), String> {
     let fail = |e: std::io::Error| format!("{}: {e}", path.display());
     let mut file = fs::OpenOptions::new().read(true).append(true).create(true).open(path).map_err(fail)?;
     let mut text = String::new();
@@ -231,8 +229,7 @@ pub fn append(path: &Path, events: &[Event]) -> Result<u64, String> {
         text.push('\n');
     }
     file.write_all(text.as_bytes()).map_err(fail)?;
-    file.sync_data().map_err(fail)?;
-    Ok(len + text.len() as u64)
+    file.sync_data().map_err(fail)
 }
 
 #[cfg(test)]
@@ -254,10 +251,10 @@ mod tests {
             event(1, Op::Device { name: "Mac".into(), os: "macos".into(), app: "0.1.0".into() }),
             event(2, Op::CollectionCreate { id: "c1".into(), name: "Brand".into(), created_at: 5 }),
         ];
-        let written = append(&path, &events).unwrap();
+        append(&path, &events).unwrap();
         fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"{\"v\":1,\"dev\":\"d\",\"se").unwrap();
         let journal = read(&path).unwrap();
-        assert_eq!((journal.events.clone(), journal.newer, journal.bytes), (events, false, written));
+        assert_eq!((journal.events.clone(), journal.newer), (events, false));
 
         // The next write starts on its own line, and the broken one is skipped.
         append(&path, &[event(3, Op::CollectionDelete { id: "c1".into() })]).unwrap();

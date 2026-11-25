@@ -3,6 +3,7 @@ mod db;
 mod fonts;
 mod google;
 mod insights;
+mod libraries;
 mod library;
 mod machine;
 mod model;
@@ -288,6 +289,21 @@ fn set_activation(state: State<AppState>, paths: Vec<String>, scope: Scope) -> C
         let previous = machine.scope_of(&path)?;
         match activation::activate(Path::new(&path), scope, previous) {
             Ok(()) => machine.set_scope(&path, scope)?,
+            Err(e) => errors.push(e),
+        }
+    }
+    activation::finish_batch();
+    Ok(errors)
+}
+
+/// Unregisters every font Typeshelf activated, whatever library it came from.
+#[tauri::command]
+fn deactivate_all(state: State<AppState>) -> CmdResult<Vec<String>> {
+    let machine = machine(&state);
+    let mut errors = Vec::new();
+    for (path, scope) in machine.activation()? {
+        match activation::deactivate(Path::new(&path), scope) {
+            Ok(()) => machine.set_scope(&path, Scope::None)?,
             Err(e) => errors.push(e),
         }
     }
@@ -617,6 +633,13 @@ pub fn run() {
             import_paths,
             remove_families,
             set_activation,
+            deactivate_all,
+            libraries::list_libraries,
+            libraries::create_library,
+            libraries::open_library,
+            libraries::switch_library,
+            libraries::move_library,
+            libraries::forget_library,
             set_starred,
             create_collection,
             rename_collection,
