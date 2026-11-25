@@ -457,17 +457,9 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use std::sync::{Mutex, RwLock};
 
     fn temp_state() -> AppState {
-        let root = std::env::temp_dir().join(format!("typeshelf-api-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join("Fonts")).unwrap();
-        AppState {
-            db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()),
-            fonts_dir: root.join("Fonts"),
-            system: RwLock::new(None),
-        }
+        AppState::for_tests(&std::env::temp_dir().join(format!("typeshelf-api-{}", uuid::Uuid::new_v4())))
     }
 
     fn req<'a>(method: &'a str, url: &'a str, body: &'a str) -> Request<'a> {

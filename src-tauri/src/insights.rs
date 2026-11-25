@@ -249,9 +249,8 @@ pub fn trash_copies(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
     use crate::SystemScan;
-    use std::sync::{Arc, Mutex, RwLock};
+    use std::sync::Arc;
 
     struct Sandbox {
         root: PathBuf,
@@ -361,14 +360,13 @@ mod tests {
         let protected = sandbox.face("system/b.ttf", "Other", 100);
         let outside = sandbox.face("outside.ttf", "Outside", 100);
 
-        let mut db = Db::open(&sandbox.root.join("library.sqlite")).unwrap();
-        db.insert_faces(&[kept.clone(), gone.clone()]).unwrap();
-        db.set_starred("A", true).unwrap();
-        let state = AppState {
-            db: Mutex::new(db),
-            fonts_dir: sandbox.roots.library.clone(),
-            system: RwLock::new(Some(Arc::new(SystemScan::new(vec![installed.clone()])))),
-        };
+        let state = AppState::for_tests(&sandbox.root.join("state"));
+        {
+            let mut db = lock(&state);
+            db.insert_faces(&[kept.clone(), gone.clone()]).unwrap();
+            db.set_starred("A", true).unwrap();
+        }
+        *state.system.write().unwrap() = Some(Arc::new(SystemScan::new(vec![installed.clone()])));
 
         let paths = vec![kept.path.clone(), gone.path.clone(), protected.path.clone(), outside.path.clone()];
         let errors = trash_copies(&state, &sandbox.roots, paths, |p| fs::remove_file(p).map_err(|e| e.to_string())).unwrap();

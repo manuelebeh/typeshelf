@@ -75,6 +75,16 @@ fn lock(state: &AppState) -> std::sync::MutexGuard<'_, Db> {
     state.db.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+#[cfg(test)]
+impl AppState {
+    /// A state over a throwaway library under `root`.
+    fn for_tests(root: &Path) -> Self {
+        let fonts_dir = root.join("Fonts");
+        fs::create_dir_all(&fonts_dir).unwrap();
+        AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir, system: RwLock::new(None) }
+    }
+}
+
 // ---------------------------------------------------------------- library
 
 #[tauri::command]
@@ -651,9 +661,7 @@ mod tests {
             return;
         };
         let root = std::env::temp_dir().join(format!("typeshelf-test-{}", uuid::Uuid::new_v4()));
-        let fonts_dir = root.join("Fonts");
-        fs::create_dir_all(&fonts_dir).unwrap();
-        let state = AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir, system: RwLock::new(None) };
+        let state = AppState::for_tests(&root);
 
         let src = source.to_string_lossy().into_owned();
         let first = import_blocking(&state, vec![src.clone()], true).unwrap();
