@@ -78,6 +78,10 @@ pub fn open(state: &AppState, path: &Path, as_copy: bool) -> CmdResult<OpenOutco
 
 pub fn switch(state: &AppState, id: &str) -> CmdResult<()> {
     let known = machine(state).library(id)?.ok_or("Library not found")?;
+    // The folder may have gone since the interface listed it: say so rather than name a file.
+    if !known.path.join(manifest::FILE).is_file() {
+        return Err("This library cannot be reached".into());
+    }
     let library = manage::open_at(&state.data_dir, &machine(state), &known.path, now())?;
     show(state, library)
 }
@@ -297,6 +301,10 @@ mod tests {
         drop(state);
         let state = AppState::for_tests(&data);
         assert_eq!(current(&state).id, first);
+        std::fs::rename(data.join("Second.typeshelf"), data.join("away")).unwrap();
+        assert_eq!(switch(&state, &second).unwrap_err(), "This library cannot be reached");
+        assert_eq!(current(&state).id, first);
+        std::fs::rename(data.join("away"), data.join("Second.typeshelf")).unwrap();
         forget(&state, &second).unwrap();
         assert_eq!(list(&state).unwrap().len(), 1);
         assert!(data.join("Second.typeshelf").is_dir(), "forgetting never deletes the folder");
