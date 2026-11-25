@@ -2,8 +2,9 @@
 
 use super::{default_ops, manifest, OpenLibrary, Opener};
 use crate::activation::Activator;
+use crate::db::Db;
 use crate::machine::{self, MachineDb};
-use crate::model::Scope;
+use crate::model::{Face, Scope};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,6 +30,19 @@ pub fn open_at(data_dir: &Path, machine: &MachineDb, root: &Path, now: i64) -> R
     let library = OpenLibrary::open(root, &Opener { device_id: &device_id, device_name: &device_name, cache: &cache })?;
     machine.remember(&library.id, root, &device_id, now)?;
     Ok(library)
+}
+
+/// The faces of the libraries that are not open, most recently opened first, as their caches
+/// last saw them.
+pub fn faces_elsewhere(data_dir: &Path, machine: &MachineDb, open: &str) -> R<Vec<Face>> {
+    let mut faces = Vec::new();
+    for known in machine.libraries()?.into_iter().filter(|k| k.id != open && k.path.join(manifest::FILE).is_file()) {
+        match Db::open_read_only(&cache_path(data_dir, &known.id)).and_then(|db| db.faces()) {
+            Ok(found) => faces.extend(found),
+            Err(e) => eprintln!("{}: {e}", known.path.display()),
+        }
+    }
+    Ok(faces)
 }
 
 /// Writes a new package, with the default collections and tags, and opens it.

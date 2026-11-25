@@ -297,7 +297,6 @@ mod tests {
         };
         let os = Activator { on: &|path, _| record("on", path), off: &|path, _| record("off", path) };
         run(data, machine, &os, 10).unwrap();
-        drop(os);
         calls.into_inner()
     }
 
