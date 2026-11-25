@@ -198,9 +198,12 @@ const insights = (): Insights => ({
 const libraries: LibraryInfo[] = [
   { id: "main", name: "Typeshelf", path: "/Users/demo/Typeshelf.typeshelf", current: true, connected: true },
   { id: "team", name: "Team Fonts", path: "/Volumes/Studio/Team Fonts.typeshelf", current: false, connected: false },
+  { id: "studio", name: "Studio Shared", path: "/Users/demo/Dropbox/Studio Shared.typeshelf", current: false, connected: true },
 ];
+const viewOnly = new Set<string>();
 const shelves = new Map<string, Pick<Library, "faces" | "collections" | "membership" | "tags" | "tagMembership" | "smartSets">>([
   ["main", { faces, collections, membership, tags, tagMembership, smartSets }],
+  ["studio", { faces: faces.slice(), collections, membership, tags, tagMembership, smartSets }],
 ]);
 const show = (id: string) => libraries.forEach((l) => (l.current = l.id === id));
 
@@ -248,7 +251,21 @@ const commands: Record<string, (a: any) => unknown> = {
   load_library: (): Library => {
     const current = libraries.find((l) => l.current)!;
     const content = shelves.get(current.id)!;
-    return { id: current.id, name: current.name, root: current.path, readOnly: false, ...content, activation, fontsDir: `${current.path}/Fonts` };
+    const shared = current.path.includes("/Dropbox/");
+    return {
+      id: current.id,
+      name: current.name,
+      root: current.path,
+      readOnly: viewOnly.has(current.id),
+      connected: true,
+      waiting: false,
+      viewOnlyChoice: viewOnly.has(current.id),
+      sharedBy: shared ? "Dropbox" : null,
+      lastChange: shared ? { device: "Studio iMac", at: Date.now() / 1000 - 3600 } : null,
+      ...content,
+      activation,
+      fontsDir: `${current.path}/Fonts`,
+    };
   },
   list_libraries: () => libraries,
   create_library: ({ path }: { path: string }) => {
@@ -264,6 +281,8 @@ const commands: Record<string, (a: any) => unknown> = {
     libraries.filter((l) => l.id === id).forEach((l) => (l.path = `${parent}/${l.name}.typeshelf`)),
   forget_library: ({ id }: { id: string }) => void libraries.splice(libraries.findIndex((l) => l.id === id), 1),
   take_pending_open: () => [],
+  set_view_only: ({ id, enabled }: { id: string; enabled: boolean }) => void (enabled ? viewOnly.add(id) : viewOnly.delete(id)),
+  sync_library: () => false,
   deactivate_all: () => {
     for (const path of Object.keys(activation)) delete activation[path];
     return [];

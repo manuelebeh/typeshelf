@@ -14,7 +14,7 @@
           <button id="library-button" type="button" aria-haspopup="menu" title="Libraries" data-i18n-attr="title">
             <span id="library-name"></span>
           </button>
-          <p id="library-status" class="muted small" hidden></p>
+          <div id="library-status" class="muted small" hidden></div>
         </div>
         <nav id="sidebar-nav" class="sidebar-nav"></nav>
         <footer class="sidebar-foot">
@@ -150,6 +150,7 @@
             <div class="form-field">
               <label class="check"><input id="setting-copy" type="checkbox" /> <span data-i18n>Copy fonts into the library</span></label>
               <p class="hint" data-i18n>When off, files stay where they are and are only referenced.</p>
+              <p id="copy-forced" class="hint" data-i18n hidden>This library is shared, so imported fonts are always copied into it.</p>
             </div>
           </div>
           <div class="form-row">
