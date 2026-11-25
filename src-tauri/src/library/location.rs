@@ -21,6 +21,16 @@ pub fn shared_by(root: &Path) -> Option<&'static str> {
             p if p == "onedrive" || p.starts_with("onedrive -") || p.starts_with("onedrive-") => "OneDrive",
             "box sync" | "box-box" => "Box",
             "box" if in_cloud_storage => "Box",
+            "pcloud drive" | "pclouddrive" | "pcloud sync" => "pCloud",
+            p if in_cloud_storage && p.starts_with("pcloud") => "pCloud",
+            "mega" | "megasync" => "MEGA",
+            p if in_cloud_storage && p.starts_with("mega") => "MEGA",
+            "nextcloud" => "Nextcloud",
+            p if p.starts_with("nextcloud-") => "Nextcloud",
+            "proton drive" => "Proton Drive",
+            p if p.starts_with("protondrive") => "Proton Drive",
+            "tresorit" | "tresorit drive" | "tresors" | "my tresors" => "Tresorit",
+            p if in_cloud_storage && p.starts_with("tresorit") => "Tresorit",
             _ => continue,
         };
         return Some(service);
@@ -44,12 +54,21 @@ mod tests {
             ("/Users/a/Library/CloudStorage/GoogleDrive-a@b.c/My Drive/T.typeshelf", "Google Drive"),
             ("C:\\Users\\a\\OneDrive - Studio\\T.typeshelf", "OneDrive"),
             ("/Users/a/Library/CloudStorage/Box-Box/T.typeshelf", "Box"),
+            ("/Users/a/pCloud Drive/T.typeshelf", "pCloud"),
+            ("/Users/a/MEGA/T.typeshelf", "MEGA"),
+            ("/home/a/Nextcloud/T.typeshelf", "Nextcloud"),
+            ("/Users/a/Library/CloudStorage/Nextcloud-a@cloud/T.typeshelf", "Nextcloud"),
+            ("/Users/a/Library/CloudStorage/ProtonDrive-a@proton.me-folder/T.typeshelf", "Proton Drive"),
+            ("C:\\Users\\a\\Proton Drive\\a\\My files\\T.typeshelf", "Proton Drive"),
+            ("/Users/a/Tresors/Brand/T.typeshelf", "Tresorit"),
             ("/Volumes/Studio/T.typeshelf", "drive"),
             ("\\\\server\\fonts\\T.typeshelf", "drive"),
         ] {
             assert_eq!(found(path), Some(service), "{path}");
         }
-        for path in ["/Users/a/Documents/Dropbox.typeshelf", "/Users/a/box/T.typeshelf", "C:\\Fonts\\T.typeshelf"] {
+        for path in
+            ["/Users/a/Documents/Dropbox.typeshelf", "/Users/a/box/T.typeshelf", "/Users/a/Megafonts/T.typeshelf", "C:\\Fonts\\T.typeshelf"]
+        {
             assert_eq!(found(path), None, "{path}");
         }
     }
