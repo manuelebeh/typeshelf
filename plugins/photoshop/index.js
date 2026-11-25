@@ -68,11 +68,16 @@ async function usedFonts(doc) {
   return [...names];
 }
 
-function installedFonts() {
-  const names = new Set();
-  const fonts = app.fonts;
-  for (let i = 0; i < fonts.length; i++) names.add(fonts[i].postScriptName);
-  return names;
+/**
+ * PostScript names of the fonts Photoshop lists. Read in one call: going through `app.fonts` takes
+ * several seconds with a thousand fonts, during which the panel cannot answer Typeshelf.
+ */
+async function installedFonts() {
+  const [result] = await action.batchPlay(
+    [{ _obj: "get", _target: [{ _property: "fontList" }, { _ref: "application", _enum: "ordinal", _value: "targetEnum" }] }],
+    {},
+  );
+  return new Set(result.fontList.fontPostScriptName);
 }
 
 /** The text layers selected in the Layers panel; or why there are none. */
@@ -99,7 +104,7 @@ const host = {
     const doc = app.activeDocument;
     if (!doc) return null;
     const used = await usedFonts(doc);
-    const installed = installedFonts();
+    const installed = await installedFonts();
     // Photoshop keeps deactivated fonts in app.fonts: a listed font may still be missing.
     return {
       name: doc.title,
@@ -124,16 +129,23 @@ const host = {
   async applyFont(name) {
     const { error, doc, layers } = selectedText();
     if (error) return { error };
-    if (!installedFonts().has(name)) return { retry: true };
+    if (!(await installedFonts()).has(name)) return { retry: true };
+    let refused = false;
     await core.executeAsModal(
       async (context) => {
         const history = await context.hostControl.suspendHistory({ documentID: doc.id, name: "Typeshelf" });
-        for (const layer of layers) layer.textItem.characterStyle.font = name;
-        await context.hostControl.resumeHistory(history);
+        for (const layer of layers) {
+          const style = layer.textItem.characterStyle;
+          style.font = name;
+          // Photoshop ignores some of the fonts it lists, without an error.
+          if (style.font !== name) refused = true;
+        }
+        // false: puts the layers back as they were.
+        await context.hostControl.resumeHistory(history, !refused);
       },
       { commandName: "Typeshelf" },
     );
-    return { count: layers.length };
+    return refused ? { error: "font_refused" } : { count: layers.length };
   },
   onDocumentChange(cb) {
     action.addNotificationListener(["open", "select"], (event, descriptor) => {

@@ -145,7 +145,7 @@ POST /v1/bridge/selection  { "selection": { "text", "font?", "size?", "color?", 
 
 The first answers `{ "commands": [{ "id", "kind": "apply" | "selection", "font?" }] }`; `font` is a
 PostScript name. The second reports on one command, with `error` set to `no_document`,
-`no_selection`, `font_unavailable` or a message. The third is the panel's button. A plugin silent for
+`no_selection`, `font_unavailable`, `font_refused` or a message. The third is the panel's button. A plugin silent for
 5 seconds counts as closed, and a command it did not pick up within 10 seconds is dropped. All three
 require `X-Typeshelf-Client`.
 
@@ -167,10 +167,16 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   (`xmpTPg:Fonts`), completed with the font of each readable text frame, and asks Typeshelf
   (`/v1/fonts/status`, CoreText on macOS) which ones are really available. The metadata dates from
   the last save, which is the right moment, since fonts are missing when a file opens.
+  A font applied to text it has no letters for only lands on the spaces: the panel checks the first
+  letter and undoes the change.
 - Photoshop (tried in Photoshop 2026): the manifest's network permission only works with a host
   name without a port (`http://localhost`), not with `127.0.0.1`; Typeshelf therefore also listens
   on `[::1]`. `loadEvent: "startup"` loads the plugin when Photoshop launches, with the panel
   closed. Photoshop keeps a deactivated font in `app.fonts`: the panel lets Typeshelf decide.
+  Reading names through `app.fonts` takes several seconds with a thousand fonts and freezes the
+  panel; the `fontList` property of the application gives them at once. A font without the letters
+  of the text (an Arabic font on Latin text) is ignored without an error: the panel reads the font
+  back and leaves the layers as they were.
 - Photoshop without UXP Developer Tool: the plugin can be registered in
   `~/Library/Application Support/Adobe/UXP/PluginsInfo/v1/PS.json` (with Photoshop closed), with a
   link to this folder in `…/UXP/Plugins/External/`. Photoshop only reloads it on restart.

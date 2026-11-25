@@ -119,6 +119,17 @@ function typeshelfSelection() {
   return lines.join("\n");
 }
 
+/* False when the first letter of the range did not get the font. */
+function typeshelfTookFont(range, name) {
+  var letter = range.contents.search(/\S/);
+  if (letter < 0) return true;
+  try {
+    return range.characters[letter].characterAttributes.textFont.name === name;
+  } catch (e) {
+    return false;
+  }
+}
+
 /* Applies a font, by PostScript name, to the selected text. */
 function typeshelfApplyFont(name) {
   if (app.documents.length === 0) return "error\tno_document";
@@ -132,5 +143,13 @@ function typeshelfApplyFont(name) {
   }
   for (var i = 0; i < ranges.length; i++) ranges[i].characterAttributes.textFont = font;
   app.redraw();
+  // A font without these letters is silently left off them, but not off the spaces: undo it all.
+  for (var r = 0; r < ranges.length; r++) {
+    if (!typeshelfTookFont(ranges[r], name)) {
+      app.undo();
+      app.redraw();
+      return "error\tfont_refused";
+    }
+  }
   return "count\t" + ranges.length;
 }

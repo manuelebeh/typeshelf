@@ -477,6 +477,7 @@ export const fr: Record<string, string> = {
   "No document is open": "Aucun document n'est ouvert",
   "Select some text first": "Sélectionnez d'abord du texte",
   "The application does not see this font yet. Try again.": "L'application ne voit pas encore cette police. Réessayez.",
+  "The application did not apply this font: it may lack these letters": "L'application n'a pas appliqué cette police : il lui manque peut-être ces lettres",
   "Applied in {app} ({n} text object)": "Appliquée dans {app} ({n} texte)",
   "Applied in {app} ({n} text objects)": "Appliquée dans {app} ({n} textes)",
 };

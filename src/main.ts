@@ -1940,6 +1940,7 @@ function onBridgeResult(result: BridgeResult) {
     no_document: t("No document is open"),
     no_selection: t("Select some text first"),
     font_unavailable: t("The application does not see this font yet. Try again."),
+    font_refused: t("The application did not apply this font: it may lack these letters"),
   };
   if (!result.ok) return toast(`${client} : ${reasons[result.error ?? ""] ?? result.error}`, true);
   if (result.kind === "selection") {
