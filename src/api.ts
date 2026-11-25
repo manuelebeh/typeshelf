@@ -44,12 +44,21 @@ export interface Tag {
   createdAt: number;
 }
 
+export interface SmartSet {
+  id: string;
+  name: string;
+  /** JSON of the saved scope, search and filters (see filters.ts). */
+  query: string;
+  createdAt: number;
+}
+
 export interface Library {
   faces: Face[];
   collections: Collection[];
   membership: Record<string, string[]>;
   tags: Tag[];
   tagMembership: Record<string, string[]>;
+  smartSets: SmartSet[];
   activation: Record<string, Scope>;
   fontsDir: string;
 }
@@ -174,6 +183,9 @@ export const api = {
     invoke<void>("update_tag", { id, name, color, rule }),
   deleteTag: (id: string) => invoke<void>("delete_tag", { id }),
   setTagged: (id: string, families: string[], tagged: boolean) => invoke<void>("set_tagged", { id, families, tagged }),
+  createSmartSet: (name: string, query: string) => invoke<string>("create_smart_set", { name, query }),
+  updateSmartSet: (id: string, name: string, query: string) => invoke<void>("update_smart_set", { id, name, query }),
+  deleteSmartSet: (id: string) => invoke<void>("delete_smart_set", { id }),
   faceDetails: (id: string) => invoke<FaceDetails>("face_details", { id }),
   googleCatalog: (refresh: boolean) => invoke<GoogleCatalog>("google_catalog", { refresh }),
   googleDownload: (family: string) =>

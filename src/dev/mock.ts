@@ -3,7 +3,7 @@
  * is opened in a regular browser. It never ships: main.ts loads it only in dev mode
  * outside Tauri. Previews use fonts bundled with macOS.
  */
-import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, Tag } from "../api";
+import type { Collection, DuplicateCopy, DuplicateGroup, Insights, Face, FaceDetails, GoogleFamily, Library, PluginInstallState, Scope, SmartSet, Tag } from "../api";
 
 const SUP = "/System/Library/Fonts/Supplemental";
 let n = 0;
@@ -72,6 +72,8 @@ const tags: Tag[] = [
 ];
 const tagMembership: Record<string, string[]> = { "default-tag-0": [faces[6].id] };
 const activation: Record<string, Scope> = { [faces[3].path]: "persistent", [faces[4].path]: "temporary" };
+
+const smartSets: SmartSet[] = [];
 
 const familyFaces = (families: string[]) => faces.filter((f) => families.includes(f.family));
 
@@ -230,7 +232,7 @@ const commands: Record<string, (a: any) => unknown> = {
     faces.push(...added);
     return { summary: { imported: added.length, skipped: 0, failures: [] }, paths: added.map((f) => f.path) };
   },
-  load_library: (): Library => ({ faces, collections, membership, tags, tagMembership, activation, fontsDir: "~/Typeshelf/Fonts" }),
+  load_library: (): Library => ({ faces, collections, membership, tags, tagMembership, smartSets, activation, fontsDir: "~/Typeshelf/Fonts" }),
   system_fonts: () => systemFaces,
   // Referencing installed fonts (favourite, tag, collection) records them in the library.
   import_paths: ({ paths }: { paths: string[] }) => {
@@ -278,6 +280,14 @@ const commands: Record<string, (a: any) => unknown> = {
     ids.forEach((x) => (tagged ? current.add(x) : current.delete(x)));
     tagMembership[id] = [...current];
   },
+  create_smart_set: ({ name, query }: { name: string; query: string }) => {
+    const id = `s${Date.now()}`;
+    smartSets.push({ id, name, query, createdAt: 0 });
+    return id;
+  },
+  update_smart_set: ({ id, name, query }: { id: string; name: string; query: string }) =>
+    smartSets.filter((s) => s.id === id).forEach((s) => Object.assign(s, { name, query })),
+  delete_smart_set: ({ id }: { id: string }) => void smartSets.splice(smartSets.findIndex((s) => s.id === id), 1),
   face_details: ({ id }: { id: string }) => details(id),
   // Demo heuristic: Latin-script samples are supported, other scripts are not.
   language_support: ({ samples }: { samples: string[] }) =>
