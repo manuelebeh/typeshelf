@@ -1,6 +1,6 @@
 {
   "name": "Typeshelf",
-  "description": "Activates in Typeshelf the fonts that open documents are missing.",
+  "description": "Activates the fonts open documents are missing, and applies the ones chosen in Typeshelf.",
   "author": "Typeshelf",
   "identifier": "dev.typeshelf.sketch",
   "version": "0.1.0",
@@ -13,8 +13,14 @@
       "script": "typeshelf.js",
       "handlers": {
         "run": "onActivate",
-        "actions": { "OpenDocument": "onOpenDocument" }
+        "actions": { "Startup": "onStartup", "OpenDocument": "onOpenDocument" }
       }
+    },
+    {
+      "name": "Preview in Typeshelf",
+      "identifier": "preview",
+      "script": "typeshelf.js",
+      "handler": "onPreview"
     },
     {
       "name": "Settings…",
@@ -25,6 +31,6 @@
   ],
   "menu": {
     "title": "Typeshelf",
-    "items": ["activate", "settings"]
+    "items": ["activate", "preview", "settings"]
   }
 }

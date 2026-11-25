@@ -6,6 +6,10 @@
  * downloaded from Google Fonts. Plugins ▸ Typeshelf ▸ Activate Missing Fonts does the
  * same on demand.
  *
+ * It also takes orders from Typeshelf: applying a font to the selected text layers, and
+ * sending their text there (also Plugins ▸ Typeshelf ▸ Preview in Typeshelf). A plugin cannot
+ * be called, so a loop started with Sketch asks Typeshelf what it wants every second.
+ *
  * Sketch keeps the PostScript name of a missing font in the text, so names are read from each
  * run of text; NSFont then tells whether this Sketch session can use the font. Sketch has no
  * fetch(): requests go through NSURLSession, answered on the main queue, while a fiber keeps
@@ -17,6 +21,10 @@ var UI = require("sketch/ui");
 
 var BASE = "http://127.0.0.1:47391";
 var DEFAULTS = { auto: true, google: true, persistent: false };
+var POLL_MS = 1000;
+var IDLE_MS = 5000; // while Typeshelf does not answer
+var APPLY_RETRY_MS = 750;
+var APPLY_RETRIES = 8;
 
 function pref(key) {
   var value = Settings.settingForKey("typeshelf." + key);
@@ -42,6 +50,7 @@ var FR = {
   "Keep them active after Typeshelf quits": "Les garder actives après la fermeture de Typeshelf",
   "Typeshelf must be open to activate fonts.": "Typeshelf doit être ouvert pour activer les polices.",
   "Cancel": "Annuler",
+  "Select some text first.": "Sélectionnez d'abord du texte.",
 };
 var french = /^fr/i.test(String(NSLocale.preferredLanguages().firstObject() || ""));
 
@@ -97,11 +106,11 @@ function usable(name) {
   return !!font && String(font.fontName()) === name;
 }
 
-function request(method, path, body, done) {
+function request(method, path, body, done, timeout) {
   var fiber = require("sketch/async").createFiber();
   var req = NSMutableURLRequest.requestWithURL(NSURL.URLWithString(BASE + path));
   req.setHTTPMethod(method);
-  req.setTimeoutInterval(method === "GET" ? 3 : 120); // Google Fonts downloads can take a while
+  req.setTimeoutInterval(timeout || (method === "GET" ? 3 : 120)); // Google Fonts downloads can take a while
   req.setValue_forHTTPHeaderField("Sketch", "X-Typeshelf-Client");
   if (body) {
     req.setValue_forHTTPHeaderField("application/json", "Content-Type");
@@ -199,13 +208,168 @@ function reopen(document, message) {
   return true;
 }
 
+/** The document in front; the first one open when Sketch itself is in the background. */
+function frontDocument() {
+  var native = NSDocumentController.sharedDocumentController().currentDocument() || NSApp.orderedDocuments().firstObject();
+  return native ? sketch.fromNative(native) : null;
+}
+
+function documentName(document) {
+  return document ? String(document.sketchObject.displayName()) : null;
+}
+
+/** The selected text layers, or why there are none. */
+function selectedText() {
+  var document = frontDocument();
+  if (!document) return { error: "no_document" };
+  var layers = document.selectedLayers.layers.filter(function (layer) {
+    return layer.type === "Text" && layer.text.length > 0;
+  });
+  return layers.length ? { document: document, layers: layers } : { error: "no_selection" };
+}
+
+/** The selected text and the style of its first character. */
+function readSelection() {
+  var found = selectedText();
+  if (found.error) return { ok: false, error: found.error };
+  var layer = found.layers[0];
+  var style = layer.style;
+  var first = layer.sketchObject.attributedStringValue().attribute_atIndex_effectiveRange(NSFontAttributeName, 0, null);
+  var color = String(style.textColor || "").slice(0, 7); // "#rrggbbaa"
+  return {
+    ok: true,
+    count: found.layers.length,
+    selection: {
+      text: String(layer.text),
+      font: first ? String(first.fontName()) : null,
+      size: style.fontSize || null,
+      color: color || null,
+      // Sketch spaces letters in points, Typeshelf in thousandths of an em.
+      tracking: style.kerning && style.fontSize ? (style.kerning / style.fontSize) * 1000 : 0,
+      count: found.layers.length,
+    },
+  };
+}
+
+/** Whether the font has every letter of the text; spaces and emoji do not count. */
+function covers(font, text) {
+  var characters = font.coveredCharacterSet();
+  return Array.from(String(text)).every(function (c) {
+    var code = c.codePointAt(0);
+    if (/\s/.test(c) || code < 32 || code > 0xffff || code === 0x200d || code === 0xfe0f) return true;
+    return !!characters.longCharacterIsMember(code);
+  });
+}
+
+/** Sets the font of whole layers; everything done at once is one undo step. */
+function applyFont(name) {
+  var found = selectedText();
+  if (found.error) return { ok: false, error: found.error };
+  if (!usable(name)) return { retry: true };
+  var font = NSFont.fontWithName_size(name, 12);
+  // Checked first: Sketch would draw the missing letters with another font.
+  var refused = found.layers.some(function (layer) {
+    return !covers(font, layer.text);
+  });
+  if (refused) return { ok: false, error: "font_refused" };
+  found.layers.forEach(function (layer) {
+    layer.sketchObject.setFontPostscriptName(name);
+    layer.sketchObject.adjustFrameToFit();
+  });
+  var history = found.document.sketchObject.historyMaker();
+  if (history) history.commitHistoryWithTitle("Typeshelf");
+  return { ok: true, count: found.layers.length };
+}
+
+/** Carries out one command from Typeshelf and reports how it went. */
+function run(command, retries) {
+  var outcome;
+  try {
+    outcome = command.kind === "apply" ? applyFont(command.font) : readSelection();
+  } catch (e) {
+    outcome = { ok: false, error: String(e) };
+  }
+  if (outcome.retry) {
+    // A font activated a moment ago may not be listed yet.
+    if (retries > 0) {
+      setTimeout(function () {
+        run(command, retries - 1);
+      }, APPLY_RETRY_MS);
+      return;
+    }
+    outcome = { ok: false, error: "font_unavailable" };
+  }
+  outcome.id = command.id;
+  outcome.kind = command.kind;
+  request("POST", "/v1/bridge/result", outcome, function () {}, 3);
+}
+
+/**
+ * Starts the loop that asks Typeshelf for commands, unless one is already running. Each plugin
+ * run has its own JavaScript context: the thread dictionary is what they share.
+ */
+function startBridge() {
+  var shared = NSThread.mainThread().threadDictionary();
+  var last = shared.objectForKey("typeshelf.polled");
+  if (last && Date.now() - Number(last) < 2 * IDLE_MS) return;
+  var me = String(Date.now()) + String(Math.random());
+  shared.setObject_forKey(me, "typeshelf.loop");
+  coscript.setShouldKeepAround(true);
+
+  function poll() {
+    // A newer loop took over.
+    if (String(shared.objectForKey("typeshelf.loop")) !== me) return;
+    shared.setObject_forKey(String(Date.now()), "typeshelf.polled");
+    var name = null;
+    try {
+      name = documentName(frontDocument());
+    } catch (e) {
+      /* closing */
+    }
+    request(
+      "POST",
+      "/v1/bridge/poll",
+      { document: name, can: ["apply", "selection"] },
+      function (error, res) {
+        setTimeout(poll, error ? IDLE_MS : POLL_MS);
+        if (!error) {
+          (res.commands || []).forEach(function (command) {
+            run(command, APPLY_RETRIES);
+          });
+        }
+      },
+      3,
+    );
+  }
+  poll();
+}
+
+function onStartup() {
+  startBridge();
+}
+
+function onPreview() {
+  startBridge();
+  var outcome = readSelection();
+  if (!outcome.ok) {
+    say(t(outcome.error === "no_document" ? "No document open." : "Select some text first."));
+    return;
+  }
+  request("POST", "/v1/bridge/selection", { selection: outcome.selection }, function (error) {
+    if (error) say(error);
+  });
+}
+
 function onOpenDocument(context) {
+  // Sketch only runs the startup action when it launches: a plugin just installed starts here.
+  startBridge();
   if (!pref("auto")) return;
   var native = context.actionContext && context.actionContext.document;
   if (native) check(sketch.fromNative(native), false);
 }
 
 function onActivate() {
+  startBridge();
   check(sketch.getSelectedDocument(), true);
 }
 
