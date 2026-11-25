@@ -16,6 +16,7 @@ Typeshelf follows the light or dark appearance you pick in Settings.
 ## Features
 
 - **Library**: import files or folders (`.ttf`, `.otf`, `.ttc`, `.otc`) with the button or by drag and drop. Duplicates are detected by PostScript name, and fonts can optionally be copied into the library.
+- **Several libraries**: a library is one `Name.typeshelf` package holding its fonts and its history of changes, so it can be backed up or moved as a whole. Create, open (double-click or the sidebar), switch and move libraries. Fonts stay active when you switch, and the design-app plugins search every known library. A font whose file is not on this computer is shown dimmed.
 - **Activation**: permanent, or temporary (until the app quits), per family or per collection.
 - **Preview**: every family shown with an adjustable text and size, search, and automatic classification (sans serif, serif, slab, mono, script, display, symbols).
 - **System fonts**: every font installed on the OS (system and user folders) appears in "All fonts" and stays active. Favoriting, tagging or filing one in a collection records it in the library by reference, and the file does not move.
@@ -97,7 +98,14 @@ CI activates and deactivates a downloaded font for real on all three systems, te
 
 ## Data
 
-The SQLite library and copied fonts live in the app's data folder (`~/Library/Application Support/dev.typeshelf.app` on macOS). The Google Fonts catalog is cached there (`google-fonts.json`).
+Everything lives in the app's data folder (`~/Library/Application Support/dev.typeshelf.app` on macOS) unless you move a library elsewhere:
+
+- `Libraries/Typeshelf.typeshelf`: the default library. A library package holds `library.tslibrary` (its identity), `Fonts/` (copied fonts) and `journal/` (one append-only file of changes per computer).
+- `Caches/`: one SQLite database per library, rebuilt from its journals.
+- `machine.sqlite`: what belongs to this computer, such as activations and the list of known libraries.
+- `google-fonts.json`: the cached Google Fonts catalog.
+
+The library of an earlier version is moved into the default package on first launch. The old database is kept as `library.sqlite.migrated`.
 
 ## Contributing
 
