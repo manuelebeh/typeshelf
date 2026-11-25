@@ -191,6 +191,10 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   the fonts and `isSubstitute` the missing ones; before 24.5, the panel reads the font of each
   text layer and Typeshelf decides. Once the font is activated, After Effects puts the real one back
   in place of its substitute by itself (within a few seconds) and marks the project as modified.
+  Scripts cannot read the highlighted characters, so applying works on whole layers. Before
+  changing anything the panel asks each font whether it has the letters of the text
+  (`FontObject.hasGlyphsFor`, After Effects 25.1 and later); older versions read the font back and
+  undo.
 - Sketch (tried in Sketch 2026.1): a missing font that is not embedded in the file is replaced in
   memory by a system font, and only the document data keeps its name (`fontNames`, outside the
   documented API; failing that, the plugin reads the fonts of the text). Fonts embedded in the file
@@ -198,6 +202,10 @@ browser only sends after a CORS preflight that Typeshelf always refuses.
   after opening: the plugin therefore reopens the document, only if it has no unsaved changes
   (Sketch saves when closing), at most once a minute. Otherwise it asks to reopen it. Never call
   `replaceMissingFontsIfNecessary`: it permanently replaces the missing font.
+  The loop that asks Typeshelf for commands keeps running while Sketch is in the background; an
+  updated plugin only takes over after a restart of Sketch. Applying changes the font run by run
+  (`setFontPostscriptName:` would give every run the size of the first), after checking that the
+  font has the letters of the text. Sketch records the undo step by itself.
 - InDesign: written from the scripting reference and not tried in InDesign (it was not installed
   where the plugin was written). `Document.fonts` lists every font of the document with a
   `FontStatus` (installed, not available, substituted), which gives the missing ones directly. The panel
