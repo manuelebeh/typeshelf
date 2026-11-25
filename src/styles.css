@@ -191,6 +191,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 #library-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #library-button .ico { color: var(--muted); transform: rotate(90deg); }
 #library-status { margin: 4px 8px 0; }
+#library-status span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#library-status .last-change { font-size: 11px; }
+/* A view-only library: what would change it goes away or stops responding. */
+.read-only :is(#import-button, #new-collection, #new-tag, .chip-add, [data-filter="save"]) { display: none; }
+.read-only .star { pointer-events: none; opacity: 0.45; }
 
 .sidebar-foot { padding: 8px 10px 10px; border-top: 1px solid var(--line); }
 

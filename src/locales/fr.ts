@@ -454,4 +454,11 @@ export const fr: Record<string, string> = {
   "Remove “{name}” from this list": "Retirer « {name} » de cette liste",
   "Libraries": "Bibliothèques",
   "View only": "Lecture seule",
+  "This library is view-only": "Cette bibliothèque est en lecture seule",
+  "External or network drive": "Disque externe ou réseau",
+  "Waiting for files": "En attente de fichiers",
+  "Not synced": "Non synchronisée",
+  "Last change from {device} · {time}": "Dernière modification par {device} · {time}",
+  "Open as view-only on this computer": "Ouvrir en lecture seule sur cet ordinateur",
+  "This library is shared, so imported fonts are always copied into it.": "Cette bibliothèque est partagée : les polices importées y sont toujours copiées.",
 };

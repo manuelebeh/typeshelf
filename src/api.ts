@@ -79,6 +79,16 @@ export interface Library {
   /** The package folder. */
   root: string;
   readOnly: boolean;
+  /** The folder can be reached. Otherwise this is what was last seen. */
+  connected: boolean;
+  /** Part of the library has not arrived on this computer yet. */
+  waiting: boolean;
+  /** This computer chose to only read it. */
+  viewOnlyChoice: boolean;
+  /** The sync service sharing the folder, `"drive"` for an external or network drive, or null. */
+  sharedBy: string | null;
+  /** The latest change made on another computer. */
+  lastChange: { device: string; at: number } | null;
   faces: Face[];
   collections: Collection[];
   membership: Record<string, string[]>;
@@ -199,6 +209,8 @@ export const api = {
   switchLibrary: (id: string) => invoke<void>("switch_library", { id }),
   moveLibrary: (id: string, parent: string) => invoke<void>("move_library", { id, parent }),
   forgetLibrary: (id: string) => invoke<void>("forget_library", { id }),
+  setViewOnly: (id: string, enabled: boolean) => invoke<void>("set_view_only", { id, enabled }),
+  syncLibrary: () => invoke<boolean>("sync_library"),
   takePendingOpen: () => invoke<string[]>("take_pending_open"),
   deactivateAll: () => invoke<string[]>("deactivate_all"),
   systemFonts: () => invoke<Face[]>("system_fonts"),

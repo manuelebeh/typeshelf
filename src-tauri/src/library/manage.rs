@@ -3,7 +3,7 @@
 use super::{default_ops, manifest, OpenLibrary, Opener};
 use crate::activation::Activator;
 use crate::db::Db;
-use crate::machine::{self, MachineDb};
+use crate::machine::{self, KnownLibrary, MachineDb};
 use crate::model::{Face, Scope};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +11,19 @@ use std::path::{Path, PathBuf};
 type R<T> = Result<T, String>;
 
 pub const DEFAULT_NAME: &str = "Typeshelf";
+
+pub fn head_path(data_dir: &Path, id: &str) -> PathBuf {
+    data_dir.join("Heads").join(id)
+}
+
+/// The setting that remembers this computer only wants to read a library.
+pub fn view_only_key(id: &str) -> String {
+    format!("view_only:{id}")
+}
+
+pub fn view_only(machine: &MachineDb, id: &str) -> R<bool> {
+    Ok(machine.setting(&view_only_key(id))?.as_deref() == Some("1"))
+}
 
 pub fn cache_path(data_dir: &Path, id: &str) -> PathBuf {
     data_dir.join("Caches").join(format!("{id}.sqlite"))
@@ -27,8 +40,12 @@ pub fn open_at(data_dir: &Path, machine: &MachineDb, root: &Path, now: i64) -> R
     let device_id = machine.library(&id)?.map_or_else(|| uuid::Uuid::new_v4().to_string(), |k| k.device_id);
     let device_name = machine.device_name()?;
     let cache = cache_path(data_dir, &id);
-    let library = OpenLibrary::open(root, &Opener { device_id: &device_id, device_name: &device_name, cache: &cache })?;
+    let head = head_path(data_dir, &id);
+    let view_only = view_only(machine, &id)?;
+    let who = Opener { device_id: &device_id, device_name: &device_name, cache: &cache, head: &head, view_only };
+    let library = OpenLibrary::open(root, &who)?;
     machine.remember(&library.id, root, &device_id, now)?;
+    machine.set_device(&library.id, library.lock().device_id())?;
     Ok(library)
 }
 
@@ -53,8 +70,17 @@ pub fn create(data_dir: &Path, machine: &MachineDb, root: &Path, now: i64) -> R<
     Ok(library)
 }
 
+/// A known library whose folder is missing, shown from its cache.
+fn open_offline(data_dir: &Path, machine: &MachineDb, known: &KnownLibrary) -> R<OpenLibrary> {
+    let device_name = machine.device_name()?;
+    let (cache, head) = (cache_path(data_dir, &known.id), head_path(data_dir, &known.id));
+    let view_only = view_only(machine, &known.id)?;
+    let who = Opener { device_id: &known.device_id, device_name: &device_name, cache: &cache, head: &head, view_only };
+    OpenLibrary::offline(&known.id, &known.path, &who)
+}
+
 /// The library to open at launch: the current one, else another known one, else the default one.
-/// A library that is only unreachable stays the current one for the next launch.
+/// A current library that cannot be reached is shown from its cache.
 pub fn startup(data_dir: &Path, machine: &MachineDb, now: i64) -> R<OpenLibrary> {
     let current = machine.setting(machine::CURRENT_LIBRARY)?;
     let mut known = machine.libraries()?;
@@ -67,7 +93,15 @@ pub fn startup(data_dir: &Path, machine: &MachineDb, now: i64) -> R<OpenLibrary>
                 }
                 return Ok(library);
             }
-            Err(e) => eprintln!("Cannot open {}: {e}", library.path.display()),
+            Err(e) => {
+                eprintln!("Cannot open {}: {e}", library.path.display());
+                if current.as_ref() == Some(&library.id) && !library.path.join(manifest::FILE).exists() {
+                    match open_offline(data_dir, machine, library) {
+                        Ok(library) => return Ok(library),
+                        Err(e) => eprintln!("{e}"),
+                    }
+                }
+            }
         }
     }
     let root = default_root(data_dir);
@@ -159,6 +193,7 @@ fn copy_folder(from: &Path, to: &Path) -> R<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::journal::Op;
     use std::cell::RefCell;
 
     fn sandbox() -> (PathBuf, MachineDb) {
@@ -195,6 +230,43 @@ mod tests {
         assert_eq!(machine.scope_of("/elsewhere.ttf").unwrap(), Scope::Persistent);
         assert_eq!(machine.library(&library.id).unwrap().unwrap().path, target);
         assert_eq!(open_at(&data, &machine, &target, 3).unwrap().lock().collections().unwrap().len(), 4);
+        let _ = fs::remove_dir_all(data);
+    }
+
+    #[test]
+    fn view_only_refuses_writes_but_allows_activation() {
+        let (data, machine) = sandbox();
+        let root = data.join("Team.typeshelf");
+        let id = create(&data, &machine, &root, 1).unwrap().id;
+        let op = || vec![Op::CollectionDelete { id: "x".into() }];
+
+        machine.set_setting(&view_only_key(&id), "1").unwrap();
+        let library = open_at(&data, &machine, &root, 2).unwrap();
+        assert!(library.lock().read_only() && library.lock().commit(op()).is_err());
+        machine.set_scope("/a.ttf", Scope::Temporary).unwrap();
+        library.lock().set_view_only(false);
+        library.lock().commit(op()).unwrap();
+
+        machine.set_setting(&view_only_key(&id), "0").unwrap();
+        let mut shared = manifest::read(&root).unwrap();
+        shared.read_only = true;
+        manifest::write(&root, &shared).unwrap();
+        assert!(open_at(&data, &machine, &root, 3).unwrap().lock().read_only());
+        let _ = fs::remove_dir_all(data);
+    }
+
+    #[test]
+    fn missing_root_opens_cache_as_not_connected() {
+        let (data, machine) = sandbox();
+        let root = data.join("Drive.typeshelf");
+        let id = create(&data, &machine, &root, 1).unwrap().id;
+        machine.set_setting(machine::CURRENT_LIBRARY, &id).unwrap();
+        fs::rename(&root, data.join("unplugged")).unwrap();
+
+        let library = startup(&data, &machine, 2).unwrap();
+        assert_eq!((library.id.as_str(), library.lock().collections().unwrap().len()), (id.as_str(), 4));
+        assert!(library.lock().read_only());
+        assert!(!root.exists(), "nothing is written where the library was");
         let _ = fs::remove_dir_all(data);
     }
 

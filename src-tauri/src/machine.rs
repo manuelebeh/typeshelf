@@ -127,6 +127,10 @@ impl MachineDb {
             .map_err(err)
     }
 
+    pub fn set_device(&self, id: &str, device_id: &str) -> R<()> {
+        self.conn.execute("UPDATE library SET device_id = ?1 WHERE id = ?2", params![device_id, id]).map(|_| ()).map_err(err)
+    }
+
     pub fn forget(&self, id: &str) -> R<()> {
         self.conn.execute("DELETE FROM library WHERE id = ?1", [id]).map(|_| ()).map_err(err)
     }

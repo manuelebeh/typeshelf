@@ -669,7 +669,7 @@ function syncGoogleStatus() {
 
 /** Downloads every style of a Google family into the library, optionally activating it. */
 async function googleInstall(name: string, activate: boolean) {
-  if (state.googleBusy.has(name)) return;
+  if (state.googleBusy.has(name) || !canEdit()) return;
   state.googleBusy.add(name);
   render();
   toast(t("Downloading {name}…", { name }), false, 120_000);
@@ -789,6 +789,7 @@ async function run<T>(action: Promise<T>, success?: string): Promise<T | undefin
  * there on first use, by reference: their files stay where the OS put them.
  */
 async function libraryAction(families: Family[], action: () => Promise<unknown>, success?: string) {
+  if (!canEdit()) return;
   const paths = [...new Set(families.flatMap((f) => f.faces.filter(isSystemFace).map((x) => x.path)))];
   if (paths.length) {
     try {
@@ -813,7 +814,7 @@ const setScope = (families: Family[], scope: Scope) => {
 const setStarred = (fam: Family, starred: boolean) => libraryAction([fam], () => api.setStarred(fam.name, starred));
 
 async function importPaths(paths: string[]) {
-  if (!paths.length) return;
+  if (!paths.length || !canEdit()) return;
   toast(t("Importing…"), false, 60_000);
   const summary = await run(api.importPaths(paths, settings.copyOnImport));
   if (!summary) return;
@@ -830,6 +831,7 @@ function copyToLibrary(families: Family[]) {
 }
 
 async function removeFamilies(families: Family[]) {
+  if (!canEdit()) return;
   const names = families.map((f) => f.name).join(", ");
   const system = families.every((f) => f.system);
   const ok = await ask(
@@ -863,6 +865,7 @@ async function promptText(title: string, value = ""): Promise<string | null> {
 }
 
 async function newCollection(families: Family[] = []) {
+  if (!canEdit()) return;
   const name = await promptText(t("New collection"));
   if (!name) return;
   const id = await run(api.createCollection(name));
@@ -874,6 +877,7 @@ async function newCollection(families: Family[] = []) {
 }
 
 async function newTag(smart: boolean, families: Family[] = []) {
+  if (!canEdit()) return;
   const draft = await editTag(
     smart ? t("New smart tag") : t("New tag"),
     { name: "", color: "blue", rule: smart ? { match: "all", conditions: [] } : null },
@@ -945,16 +949,17 @@ function smartSetMenu(id: string): (MenuItem | "-")[] {
     "-",
     { label: t("Show its filters"), action: () => showSmartSetFilters(set) },
     ...(canSaveSmartSet()
-      ? [{ label: t("Replace with the current filters"), action: () => run(api.updateSmartSet(id, set.name, currentQuery()), t("Smart set updated")) }]
+      ? [{ label: t("Replace with the current filters"), edit: true, action: () => run(api.updateSmartSet(id, set.name, currentQuery()), t("Smart set updated")) }]
       : []),
     {
       label: t("Rename…"),
+      edit: true,
       action: async () => {
         const name = await promptText(t("Rename the smart set"), set.name);
         if (name) run(api.updateSmartSet(id, name, set.query));
       },
     },
-    { label: t("Delete the smart set"), danger: true, action: () => run(api.deleteSmartSet(id)) },
+    { label: t("Delete the smart set"), danger: true, action: () => run(api.deleteSmartSet(id)), edit: true },
   ];
 }
 
@@ -1039,6 +1044,10 @@ function libraryMenu(): (MenuItem | "-")[] {
       "-",
       { label: mac ? t("Show in Finder") : t("Show in folder"), action: () => revealItemInDir(current.path).catch((e) => toast(String(e), true)) },
       { label: t("Move the library…"), action: () => moveLibrary(current) },
+      {
+        label: `${state.lib?.viewOnlyChoice ? "✓ " : ""}${t("Open as view-only on this computer")}`,
+        action: () => libraryChange(() => api.setViewOnly(current.id, !state.lib?.viewOnlyChoice)),
+      },
     );
   }
   const gone = state.libraries.filter((l) => !l.current && !l.connected);
@@ -1053,7 +1062,42 @@ async function openPending() {
   for (const path of await api.takePendingOpen()) await openLibraryPath(path);
 }
 
+const READ_ONLY_ERROR = "This library is view-only";
+
+/** Whether the library can be changed. Says why not, for actions that menus cannot hide. */
+function canEdit(): boolean {
+  if (!state.lib?.readOnly) return true;
+  toast(t("This library is view-only"), true);
+  return false;
+}
+
+/** Changes made on other computers arrive in bursts, one journal at a time. */
+let remoteReload: number | undefined;
+function reloadSoon() {
+  clearTimeout(remoteReload);
+  remoteReload = window.setTimeout(reload, 300);
+}
+
 // ------------------------------------------------------------------ rendering: sidebar
+
+function renderLibraryStatus() {
+  const lib = state.lib;
+  const status = $("#library-status");
+  status.hidden = !lib;
+  document.body.classList.toggle("read-only", !!lib?.readOnly);
+  if (!lib) return;
+  const shared = lib.sharedBy === "drive" ? t("External or network drive") : lib.sharedBy;
+  const label = !lib.connected
+    ? t("Not connected")
+    : lib.readOnly
+      ? t("View only")
+      : lib.waiting
+        ? t("Waiting for files")
+        : (shared ?? t("Not synced"));
+  const at = lib.lastChange && new Date(lib.lastChange.at * 1000).toLocaleString(dateLocale(), { dateStyle: "medium", timeStyle: "short" });
+  const last = lib.lastChange ? t("Last change from {device} · {time}", { device: lib.lastChange.device, time: at! }) : "";
+  status.innerHTML = `<span>${esc(label)}</span>${last ? `<span class="last-change" title="${esc(last)}">${esc(last)}</span>` : ""}`;
+}
 
 function render() {
   renderSidebar();
@@ -1063,9 +1107,7 @@ function render() {
 
 function renderSidebar() {
   $("#library-name").textContent = state.lib?.name ?? "";
-  const status = $("#library-status");
-  status.hidden = !state.lib?.readOnly;
-  status.textContent = state.lib?.readOnly ? t("View only") : "";
+  renderLibraryStatus();
   const count = (key: string): number | string => {
     if (key === "insights") return state.insights?.groups.length || "";
     if (key === "google") return state.google ? googleBase().length : state.googleLoading ? "…" : "";
@@ -2031,9 +2073,15 @@ interface MenuItem {
   action?: () => void;
   danger?: boolean;
   header?: boolean;
+  /** Changes the library: left out when it is view-only. */
+  edit?: boolean;
 }
 
-function showMenu(x: number, y: number, items: (MenuItem | "-")[]) {
+function showMenu(x: number, y: number, all: (MenuItem | "-")[]) {
+  const kept = state.lib?.readOnly ? all.filter((it) => it === "-" || !it.edit) : all;
+  // Leaving entries out must not leave separators with nothing between them.
+  const items = kept.filter((it, i) => it !== "-" || (i > 0 && kept[i - 1] !== "-" && kept.slice(i + 1).some((next) => next !== "-")));
+  if (!items.length) return;
   const menu = $("#menu");
   menu.innerHTML = items
     .map((it, i) =>
@@ -2075,31 +2123,32 @@ function familyMenu(families: Family[]): (MenuItem | "-")[] {
     );
   }
   items.push(
-    { label: first.starred ? t("Remove from favorites") : t("Add to favorites"), action: () => setStarred(first, !first.starred) },
+    { label: first.starred ? t("Remove from favorites") : t("Add to favorites"), action: () => setStarred(first, !first.starred), edit: true },
     "-",
-    { label: t("Add to a collection"), header: true },
+    { label: t("Add to a collection"), header: true, edit: true },
     ...(state.lib?.collections ?? []).map((c) => ({
       label: `  ${c.name}`,
+      edit: true,
       action: () => libraryAction(families, () => api.addToCollection(c.id, names), t("Added to “{name}”", { name: c.name })),
     })),
-    { label: `  ${t("New collection…")}`, action: () => newCollection(families) },
+    { label: `  ${t("New collection…")}`, action: () => newCollection(families), edit: true },
     "-",
     ...tagItems(families),
   );
   if (state.sidebar.startsWith("col:")) {
     const id = state.sidebar.slice(4);
-    items.push({ label: t("Remove from this collection"), action: () => run(api.removeFromCollection(id, names)) });
+    items.push({ label: t("Remove from this collection"), action: () => run(api.removeFromCollection(id, names)), edit: true });
   }
   items.push("-");
-  if (first.system) items.push({ label: t("Copy the file into the library"), action: () => copyToLibrary(families) });
+  if (first.system) items.push({ label: t("Copy the file into the library"), action: () => copyToLibrary(families), edit: true });
   if (first.paths.length) {
     items.push({ label: t("Show in folder"), action: () => revealItemInDir(first.paths[0]).catch((e) => toast(String(e), true)) });
   }
   if (first.inLibrary) {
     items.push(
       first.system
-        ? { label: t("Forget favorite, tags and collections…"), danger: true, action: () => removeFamilies(families) }
-        : { label: t("Remove from library…"), danger: true, action: () => removeFamilies(families) },
+        ? { label: t("Forget favorite, tags and collections…"), danger: true, action: () => removeFamilies(families), edit: true }
+        : { label: t("Remove from library…"), danger: true, action: () => removeFamilies(families), edit: true },
     );
   }
   return items;
@@ -2110,12 +2159,12 @@ function tagItems(families: Family[]): (MenuItem | "-")[] {
   const names = families.map((f) => f.name);
   const manual = (state.lib?.tags ?? []).filter((t) => t.rule === null);
   return [
-    { label: t("Tags"), header: true },
+    { label: t("Tags"), header: true, edit: true },
     ...manual.map((t) => {
       const on = families.every((f) => hasTag(f, t.id));
-      return { label: `${on ? "✓" : "  "} ${t.name}`, action: () => libraryAction(families, () => api.setTagged(t.id, names, !on)) };
+      return { label: `${on ? "✓" : "  "} ${t.name}`, edit: true, action: () => libraryAction(families, () => api.setTagged(t.id, names, !on)) };
     }),
-    { label: `  ${t("New tag…")}`, action: () => newTag(false, families) },
+    { label: `  ${t("New tag…")}`, action: () => newTag(false, families), edit: true },
   ];
 }
 
@@ -2127,10 +2176,11 @@ function tagMenu(id: string): (MenuItem | "-")[] {
     { label: t("Activate temporarily"), action: () => setScope(familiesWithTag(id), "temporary") },
     { label: t("Deactivate the tag's fonts"), action: () => setScope(familiesWithTag(id), "none") },
     "-",
-    { label: tag.rule !== null ? t("Edit the rules…") : t("Edit…"), action: () => editExistingTag(tag) },
+    { label: tag.rule !== null ? t("Edit the rules…") : t("Edit…"), action: () => editExistingTag(tag), edit: true },
     {
       label: t("Delete the tag…"),
       danger: true,
+      edit: true,
       action: async () => {
         const ok = await ask(t("Delete the tag “{name}”? The fonts are not deleted.", { name: tag.name }), {
           title: t("Delete the tag"),
@@ -2154,19 +2204,20 @@ function collectionMenu(id: string): (MenuItem | "-")[] {
     "-",
     {
       label: t("Rename…"),
+      edit: true,
       action: async () => {
         const name = await promptText(t("Rename the collection"), collection.name);
         if (name) run(api.renameCollection(id, name));
       },
     },
-    { label: t("Delete the collection"), danger: true, action: () => run(api.deleteCollection(id)) },
+    { label: t("Delete the collection"), danger: true, action: () => run(api.deleteCollection(id)), edit: true },
   ];
 }
 
 let toastTimer: number | undefined;
 function toast(message: string, error = false, duration = error ? 6000 : 3000) {
   const el = $("#toast");
-  el.textContent = message;
+  el.textContent = message === READ_ONLY_ERROR ? t("This library is view-only") : message;
   el.classList.toggle("error", error);
   el.hidden = false;
   clearTimeout(toastTimer);
@@ -2606,7 +2657,10 @@ function wire() {
   };
   const syncSettings = () => {
     $<HTMLSelectElement>("#setting-language").value = settings.language;
-    $<HTMLInputElement>("#setting-copy").checked = settings.copyOnImport;
+    const shared = !!state.lib?.sharedBy;
+    $<HTMLInputElement>("#setting-copy").checked = shared || settings.copyOnImport;
+    $<HTMLInputElement>("#setting-copy").disabled = shared;
+    $("#copy-forced").hidden = !shared;
     $<HTMLInputElement>("#setting-inspector").checked = settings.inspector;
     $("#library-path").textContent = state.lib?.root ?? "";
     $<HTMLInputElement>("#setting-google").checked = settings.google;
@@ -2757,6 +2811,16 @@ async function start() {
     /* not running inside Tauri */
   });
   openPending().catch((e) => toast(String(e), true));
+  listen("library-changed", reloadSoon).catch(() => {
+    /* not running inside Tauri */
+  });
+  // Coming back to the window is when changes made elsewhere are expected.
+  window.addEventListener("focus", () => {
+    api.syncLibrary().then(
+      (changed) => changed && reloadSoon(),
+      (e) => toast(String(e), true),
+    );
+  });
   listen<PluginActivity>("plugin-activity", (e) => onPluginActivity(e.payload)).catch(() => {
     /* not running inside Tauri */
   });
