@@ -1057,12 +1057,23 @@ function libraryMenu(): (MenuItem | "-")[] {
   return items;
 }
 
+/** Folders come and go (drives, sync services): the list is read again each time it is shown. */
+async function showLibraryMenu(button: HTMLElement) {
+  try {
+    state.libraries = await api.listLibraries();
+  } catch (e) {
+    toast(String(e), true);
+  }
+  menuBelow(button, libraryMenu());
+}
+
 /** Libraries double-clicked in the file manager. */
 async function openPending() {
   for (const path of await api.takePendingOpen()) await openLibraryPath(path);
 }
 
 const READ_ONLY_ERROR = "This library is view-only";
+const UNREACHABLE_ERROR = "This library cannot be reached";
 
 /** Whether the library can be changed. Says why not, for actions that menus cannot hide. */
 function canEdit(): boolean {
@@ -2217,7 +2228,11 @@ function collectionMenu(id: string): (MenuItem | "-")[] {
 let toastTimer: number | undefined;
 function toast(message: string, error = false, duration = error ? 6000 : 3000) {
   const el = $("#toast");
-  el.textContent = message === READ_ONLY_ERROR ? t("This library is view-only") : message;
+  const known: Record<string, string> = {
+    [READ_ONLY_ERROR]: t("This library is view-only"),
+    [UNREACHABLE_ERROR]: t("This library cannot be reached"),
+  };
+  el.textContent = known[message] ?? message;
   el.classList.toggle("error", error);
   el.hidden = false;
   clearTimeout(toastTimer);
@@ -2269,7 +2284,7 @@ function applyGoogleFilter(name: string, value: string) {
 function wire() {
   const sidebar = $("#sidebar");
   $("#library-button").insertAdjacentHTML("beforeend", icon("chevron", 14));
-  $("#library-button").addEventListener("click", (e) => menuBelow(e.currentTarget as HTMLElement, libraryMenu()));
+  $("#library-button").addEventListener("click", (e) => showLibraryMenu(e.currentTarget as HTMLElement));
   sidebar.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     if (target.closest("#new-collection")) return void newCollection();

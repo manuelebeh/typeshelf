@@ -455,6 +455,7 @@ export const fr: Record<string, string> = {
   "Libraries": "Bibliothèques",
   "View only": "Lecture seule",
   "This library is view-only": "Cette bibliothèque est en lecture seule",
+  "This library cannot be reached": "Cette bibliothèque est inaccessible",
   "External or network drive": "Disque externe ou réseau",
   "Waiting for files": "En attente de fichiers",
   "Not synced": "Non synchronisée",
