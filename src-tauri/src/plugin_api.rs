@@ -6,7 +6,7 @@
 //! a custom header, which browsers only send after a CORS preflight that is never granted.
 
 use crate::model::Scope;
-use crate::{activation, fonts, google, google_cache, import_blocking, lock, now, system_scan, AppState};
+use crate::{activation, fonts, google, google_cache, import_blocking, lock, machine, now, system_scan, AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -319,24 +319,24 @@ fn os_has(name: &str, system: &HashSet<&str>) -> bool {
 pub fn font_status(state: &AppState, names: &[String]) -> Vec<FontStatus> {
     let scan = system_scan(state);
     let system: HashSet<&str> = scan.unique.iter().map(|f| f.ps_name.as_str()).collect();
-    let db = lock(state);
-    let library = db.faces().unwrap_or_default();
+    let library = lock(state).faces().unwrap_or_default();
+    let machine = machine(state);
     names
         .iter()
         .map(|name| {
             let face = library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name));
-            let active =
-                face.is_some_and(|f| fonts::is_system_path(Path::new(&f.path)) || db.scope_of(&f.path).is_ok_and(|s| s != Scope::None));
+            let active = face
+                .is_some_and(|f| fonts::is_system_path(Path::new(&f.path)) || machine.scope_of(&f.path).is_ok_and(|s| s != Scope::None));
             FontStatus { name: name.clone(), available: active || os_has(name, &system), in_library: face.is_some() }
         })
         .collect()
 }
 
 fn activate_path(state: &AppState, path: &str, scope: Scope) -> Result<(), String> {
-    let db = lock(state);
-    let previous = db.scope_of(path)?;
+    let machine = machine(state);
+    let previous = machine.scope_of(path)?;
     activation::activate(Path::new(path), scope, previous)?;
-    db.set_scope(path, scope)
+    machine.set_scope(path, scope)
 }
 
 /// Resolves each PostScript name: installed on the system, already active, activated from
@@ -362,7 +362,7 @@ pub fn activate_fonts(state: &AppState, names: &[String], scope: Scope, google: 
                 results.insert(name.clone(), FontResult { family: Some(face.family.clone()), ..FontResult::new(name, "system") });
             }
             Some(face) => {
-                let current = lock(state).scope_of(&face.path).unwrap_or(Scope::None);
+                let current = machine(state).scope_of(&face.path).unwrap_or(Scope::None);
                 let status = if current == Scope::None { "activated" } else { "active" };
                 if current == Scope::None {
                     to_activate.entry(face.path.clone()).or_default().push(name.clone());

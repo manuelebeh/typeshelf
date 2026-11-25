@@ -1,5 +1,5 @@
 use crate::fonts;
-use crate::model::{Collection, Face, Scope, SmartSet, Tag};
+use crate::model::{Collection, Face, SmartSet, Tag};
 use rusqlite::{params, Connection, Row};
 use std::collections::HashMap;
 use std::path::Path;
@@ -72,6 +72,17 @@ impl Db {
         db.seed_defaults()?;
         db.migrate()?;
         Ok(db)
+    }
+
+    /// Rows of the activation table, which now lives in the machine database.
+    pub fn take_activation(&self) -> R<Vec<(String, String)>> {
+        let rows = {
+            let mut stmt = self.conn.prepare("SELECT path, scope FROM activation").map_err(err)?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+            rows.collect::<Result<Vec<(String, String)>, _>>().map_err(err)?
+        };
+        self.conn.execute("DELETE FROM activation", []).map_err(err)?;
+        Ok(rows)
     }
 
     fn version(&self) -> R<i64> {
@@ -404,32 +415,6 @@ impl Db {
 
     pub fn delete_smart_set(&self, id: &str) -> R<()> {
         self.conn.execute("DELETE FROM smart_set WHERE id = ?1", [id]).map(|_| ()).map_err(err)
-    }
-
-    // ---- Activation ----
-
-    pub fn activation(&self) -> R<HashMap<String, Scope>> {
-        let mut stmt = self.conn.prepare("SELECT path, scope FROM activation").map_err(err)?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, Scope::parse(&r.get::<_, String>(1)?)))).map_err(err)?;
-        rows.collect::<Result<_, _>>().map_err(err)
-    }
-
-    pub fn scope_of(&self, path: &str) -> R<Scope> {
-        Ok(self.activation()?.get(path).copied().unwrap_or(Scope::None))
-    }
-
-    pub fn set_scope(&self, path: &str, scope: Scope) -> R<()> {
-        if scope == Scope::None {
-            self.conn.execute("DELETE FROM activation WHERE path = ?1", [path])
-        } else {
-            self.conn.execute(
-                "INSERT INTO activation (path, scope) VALUES (?1, ?2)
-                 ON CONFLICT(path) DO UPDATE SET scope = excluded.scope",
-                params![path, scope.as_str()],
-            )
-        }
-        .map(|_| ())
-        .map_err(err)
     }
 }
 

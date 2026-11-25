@@ -27,6 +27,7 @@ trash = "5"
 memmap2 = "0.9"
 ureq = "3"
 tiny_http = "0.12.0"
+gethostname = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

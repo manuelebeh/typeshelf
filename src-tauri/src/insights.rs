@@ -2,7 +2,7 @@
 //! only way to remove the extra ones. Nothing is deleted unless the interface asks for it.
 
 use crate::model::{Face, Scope};
-use crate::{activation, fonts, invalidate_system, lock, system_scan, AppState};
+use crate::{activation, fonts, invalidate_system, lock, machine, system_scan, AppState};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -89,10 +89,8 @@ pub struct Insights {
 
 pub fn collect(state: &AppState, roots: &Roots) -> Result<Insights, String> {
     let scan = system_scan(state);
-    let (library, activation) = {
-        let db = lock(state);
-        (db.faces()?, db.activation()?)
-    };
+    let library = lock(state).faces()?;
+    let activation = machine(state).activation()?;
     Ok(compute(&library, &activation, &scan.all, roots))
 }
 
@@ -200,6 +198,7 @@ pub fn trash_copies(
     let mut removed_installed = false;
     {
         let mut db = lock(state);
+        let machine = machine(state);
         let library = db.faces()?;
         for path in &requested {
             let file = Path::new(path);
@@ -216,11 +215,11 @@ pub fn trash_copies(
                 errors.push(format!("{name}: this file cannot be moved to the Trash"));
                 continue;
             }
-            if let Err(e) = activation::deactivate(file, db.scope_of(path)?) {
+            if let Err(e) = activation::deactivate(file, machine.scope_of(path)?) {
                 errors.push(e);
                 continue;
             }
-            db.set_scope(path, Scope::None)?;
+            machine.set_scope(path, Scope::None)?;
             if let Err(e) = remove(file) {
                 errors.push(format!("{name}: {e}"));
                 continue;

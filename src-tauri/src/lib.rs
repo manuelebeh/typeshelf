@@ -3,11 +3,13 @@ mod db;
 mod fonts;
 mod google;
 mod insights;
+mod machine;
 mod model;
 mod plugin_api;
 mod plugin_install;
 
 use db::Db;
+use machine::MachineDb;
 use model::{Face, FaceDetails, ImportSummary, Library, Scope, SmartSet, Tag};
 use std::collections::BTreeSet;
 use std::fs;
@@ -19,6 +21,8 @@ use tauri::{AppHandle, Manager, RunEvent, State};
 
 struct AppState {
     db: Mutex<Db>,
+    /// Activation and known libraries. Lock after `db` when both are needed.
+    machine: Mutex<MachineDb>,
     fonts_dir: PathBuf,
     /// Fonts installed on the system, scanned in the background and cached.
     system: RwLock<Option<Arc<SystemScan>>>,
@@ -75,13 +79,27 @@ fn lock(state: &AppState) -> std::sync::MutexGuard<'_, Db> {
     state.db.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn machine(state: &AppState) -> std::sync::MutexGuard<'_, MachineDb> {
+    state.machine.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Moves the activation rows of a database written before they had their own file.
+fn move_activation(db: &Db, machine: &MachineDb) -> CmdResult<()> {
+    for (path, scope) in db.take_activation()? {
+        machine.set_scope(&path, Scope::parse(&scope))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 impl AppState {
     /// A state over a throwaway library under `root`.
     fn for_tests(root: &Path) -> Self {
         let fonts_dir = root.join("Fonts");
         fs::create_dir_all(&fonts_dir).unwrap();
-        AppState { db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()), fonts_dir, system: RwLock::new(None) }
+        let db = Mutex::new(Db::open(&root.join("library.sqlite")).unwrap());
+        let machine = Mutex::new(MachineDb::open(&root.join("machine.sqlite")).unwrap());
+        AppState { db, machine, fonts_dir, system: RwLock::new(None) }
     }
 }
 
@@ -103,7 +121,7 @@ fn library_blocking(state: &AppState) -> CmdResult<Library> {
         tags: db.tags()?,
         tag_membership: db.tag_membership()?,
         smart_sets: db.smart_sets()?,
-        activation: db.activation()?,
+        activation: machine(state).activation()?,
         fonts_dir: state.fonts_dir.to_string_lossy().into_owned(),
     })
 }
@@ -185,11 +203,14 @@ fn remove_families(state: State<AppState>, families: Vec<String>) -> CmdResult<V
     let faces = db.faces_of_families(&families)?;
     let paths: BTreeSet<String> = faces.iter().map(|f| f.path.clone()).collect();
     let mut errors = Vec::new();
-    for path in &paths {
-        let previous = db.scope_of(path)?;
-        match activation::deactivate(Path::new(path), previous) {
-            Ok(()) => db.set_scope(path, Scope::None)?,
-            Err(e) => errors.push(e),
+    {
+        let machine = machine(&state);
+        for path in &paths {
+            let previous = machine.scope_of(path)?;
+            match activation::deactivate(Path::new(path), previous) {
+                Ok(()) => machine.set_scope(path, Scope::None)?,
+                Err(e) => errors.push(e),
+            }
         }
     }
     activation::finish_batch();
@@ -236,16 +257,16 @@ async fn trash_copies(app: AppHandle, paths: Vec<String>) -> CmdResult<Vec<Strin
 
 #[tauri::command]
 fn set_activation(state: State<AppState>, paths: Vec<String>, scope: Scope) -> CmdResult<Vec<String>> {
-    let db = lock(&state);
+    let machine = machine(&state);
     let mut errors = Vec::new();
     for path in paths.into_iter().collect::<BTreeSet<_>>() {
         // Fonts in the OS folders are always active: nothing to (un)register.
         if fonts::is_system_path(Path::new(&path)) {
             continue;
         }
-        let previous = db.scope_of(&path)?;
+        let previous = machine.scope_of(&path)?;
         match activation::activate(Path::new(&path), scope, previous) {
-            Ok(()) => db.set_scope(&path, scope)?,
+            Ok(()) => machine.set_scope(&path, scope)?,
             Err(e) => errors.push(e),
         }
     }
@@ -255,12 +276,12 @@ fn set_activation(state: State<AppState>, paths: Vec<String>, scope: Scope) -> C
 
 /// Undo temporary activations (called on quit and at startup after a crash).
 fn reset_temporary(state: &AppState) {
-    let db = lock(state);
-    if let Ok(map) = db.activation() {
+    let machine = machine(state);
+    if let Ok(map) = machine.activation() {
         for (path, scope) in map {
             if scope == Scope::Temporary {
                 let _ = activation::deactivate(Path::new(&path), scope);
-                let _ = db.set_scope(&path, Scope::None);
+                let _ = machine.set_scope(&path, Scope::None);
             }
         }
     }
@@ -270,11 +291,11 @@ fn reset_temporary(state: &AppState) {
 
 /// Where the OS can report registrations (macOS), drop records it no longer knows.
 fn reconcile_with_system(state: &AppState) {
-    let db = lock(state);
-    if let Ok(map) = db.activation() {
+    let machine = machine(state);
+    if let Ok(map) = machine.activation() {
         for (path, _) in map {
             if activation::system_scope(Path::new(&path)) == Some(Scope::None) {
-                let _ = db.set_scope(&path, Scope::None);
+                let _ = machine.set_scope(&path, Scope::None);
             }
         }
     }
@@ -527,7 +548,9 @@ pub fn run() {
             let fonts_dir = data_dir.join("Fonts");
             fs::create_dir_all(&fonts_dir)?;
             let db = Db::open(&data_dir.join("library.sqlite"))?;
-            let state = AppState { db: Mutex::new(db), fonts_dir, system: RwLock::new(None) };
+            let machine = MachineDb::open(&data_dir.join("machine.sqlite"))?;
+            move_activation(&db, &machine)?;
+            let state = AppState { db: Mutex::new(db), machine: Mutex::new(machine), fonts_dir, system: RwLock::new(None) };
             reset_temporary(&state);
             reconcile_with_system(&state);
             app.manage(state);
@@ -683,7 +706,7 @@ mod tests {
         {
             let face = faces.iter().find(|f| f.family.to_lowercase().contains("feather")).expect("the Feather test font is expected");
             let path = face.path.clone();
-            let db = lock(&state);
+            let db = machine(&state);
             for scope in [Scope::Temporary, Scope::Persistent] {
                 let previous = db.scope_of(&path).unwrap();
                 activation::activate(Path::new(&path), scope, previous).unwrap();
