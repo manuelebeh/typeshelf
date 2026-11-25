@@ -78,8 +78,14 @@ fn lock(state: &AppState) -> std::sync::MutexGuard<'_, Db> {
 // ---------------------------------------------------------------- library
 
 #[tauri::command]
-fn load_library(state: State<AppState>) -> CmdResult<Library> {
-    let db = lock(&state);
+async fn load_library(app: AppHandle) -> CmdResult<Library> {
+    // Off the main thread: after an upgrade, the first load reads every library file.
+    tauri::async_runtime::spawn_blocking(move || library_blocking(&app.state::<AppState>())).await.map_err(|e| e.to_string())?
+}
+
+fn library_blocking(state: &AppState) -> CmdResult<Library> {
+    let mut db = lock(state);
+    db.backfill_metrics()?;
     Ok(Library {
         faces: db.faces()?,
         collections: db.collections()?,
@@ -552,6 +558,37 @@ mod tests {
         drop(db);
         // Reopening must not bring back what the user deleted.
         assert_eq!(Db::open(&path).unwrap().tags().unwrap().len(), 6);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn upgrades_a_first_release_database() {
+        let path = std::env::temp_dir().join(format!("typeshelf-upgrade-{}.sqlite", uuid::Uuid::new_v4()));
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE face (
+                 id TEXT PRIMARY KEY, path TEXT NOT NULL, face_index INTEGER NOT NULL DEFAULT 0,
+                 ps_name TEXT NOT NULL UNIQUE, family TEXT NOT NULL, style TEXT NOT NULL, full_name TEXT NOT NULL,
+                 weight INTEGER NOT NULL DEFAULT 400, italic INTEGER NOT NULL DEFAULT 0, mono INTEGER NOT NULL DEFAULT 0,
+                 classification TEXT NOT NULL, version TEXT, designer TEXT, manufacturer TEXT, license TEXT, copyright TEXT,
+                 glyph_count INTEGER NOT NULL DEFAULT 0, variable INTEGER NOT NULL DEFAULT 0,
+                 starred INTEGER NOT NULL DEFAULT 0, added_at INTEGER NOT NULL
+             );
+             INSERT INTO face (id, path, ps_name, family, style, full_name, classification, added_at)
+             VALUES ('gone', '/nowhere/gone.ttf', 'Gone', 'Gone', 'Regular', 'Gone', 'sans', 0);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut db = Db::open(&path).unwrap();
+        // Already seeded: upgrading must not add the defaults again.
+        assert!(db.collections().unwrap().is_empty());
+        db.backfill_metrics().unwrap();
+        let face = db.face("gone").unwrap().unwrap();
+        assert_eq!((face.width, face.features.len()), (5, 0));
+        drop(db);
+        assert_eq!(Db::open(&path).unwrap().faces().unwrap().len(), 1);
         let _ = fs::remove_file(&path);
     }
 

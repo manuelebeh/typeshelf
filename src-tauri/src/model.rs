@@ -13,6 +13,8 @@ pub struct Face {
     pub style: String,
     pub full_name: String,
     pub weight: u16,
+    /// OS/2 usWidthClass, 1 (ultra-condensed) to 9 (ultra-expanded).
+    pub width: u16,
     pub italic: bool,
     pub mono: bool,
     pub classification: String,
@@ -23,6 +25,8 @@ pub struct Face {
     pub copyright: Option<String>,
     pub glyph_count: u16,
     pub variable: bool,
+    /// GSUB and GPOS feature tags, sorted.
+    pub features: Vec<String>,
     pub starred: bool,
     pub added_at: i64,
 }

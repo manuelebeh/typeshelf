@@ -1,3 +1,4 @@
+use crate::fonts;
 use crate::model::{Collection, Face, Scope, Tag};
 use rusqlite::{params, Connection, Row};
 use std::collections::HashMap;
@@ -69,14 +70,59 @@ impl Db {
         .map_err(err)?;
         let db = Db { conn };
         db.seed_defaults()?;
+        db.migrate()?;
         Ok(db)
+    }
+
+    fn version(&self) -> R<i64> {
+        self.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(err)
+    }
+
+    /// Schema changes since the first release, one step per `user_version` (1 is the
+    /// seeded first schema). A new database goes through the same steps.
+    fn migrate(&self) -> R<()> {
+        if self.version()? < 2 {
+            // A NULL `features` marks a row still to be read from its file.
+            self.conn
+                .execute_batch(
+                    "BEGIN;
+                     ALTER TABLE face ADD COLUMN width INTEGER NOT NULL DEFAULT 5;
+                     ALTER TABLE face ADD COLUMN features TEXT;
+                     PRAGMA user_version = 2;
+                     COMMIT;",
+                )
+                .map_err(err)?;
+        }
+        Ok(())
+    }
+
+    /// Reads width and features from the files of faces imported before version 2.
+    /// An unreadable file gets an empty list, so it is not retried at every launch.
+    pub fn backfill_metrics(&mut self) -> R<()> {
+        let pending: Vec<(String, String, u32)> = {
+            let mut stmt = self.conn.prepare("SELECT id, path, face_index FROM face WHERE features IS NULL ORDER BY path").map_err(err)?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?;
+            rows.collect::<Result<_, _>>().map_err(err)?
+        };
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.transaction().map_err(err)?;
+        for file in pending.chunk_by(|a, b| a.1 == b.1) {
+            let data = fonts::map(Path::new(&file[0].1)).ok();
+            for (id, _, index) in file {
+                let (width, features) = data.as_deref().and_then(|d| fonts::metrics(d, *index)).unwrap_or((5, Vec::new()));
+                tx.execute("UPDATE face SET width = ?1, features = ?2 WHERE id = ?3", params![width, features.join(" "), id])
+                    .map_err(err)?;
+            }
+        }
+        tx.commit().map_err(err)
     }
 
     /// First launch: a few collections and tags to start from. Runs once (user_version),
     /// so whatever the user later deletes stays deleted.
     fn seed_defaults(&self) -> R<()> {
-        let version: i64 = self.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(err)?;
-        if version >= 1 {
+        if self.version()? >= 1 {
             return Ok(());
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -142,8 +188,8 @@ impl Db {
                 .prepare(
                     "INSERT OR IGNORE INTO face (id, path, face_index, ps_name, family, style, full_name, weight,
                         italic, mono, classification, version, designer, manufacturer, license, copyright,
-                        glyph_count, variable, starred, added_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                        glyph_count, variable, starred, added_at, width, features)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 )
                 .map_err(err)?;
             for f in faces {
@@ -168,7 +214,9 @@ impl Db {
                         f.glyph_count,
                         f.variable,
                         f.starred,
-                        f.added_at
+                        f.added_at,
+                        f.width,
+                        f.features.join(" ")
                     ])
                     .map_err(err)?;
             }
@@ -194,8 +242,8 @@ impl Db {
     pub fn repoint_face(&self, id: &str, copy: &Face) -> R<()> {
         self.conn
             .execute(
-                "UPDATE face SET path = ?1, face_index = ?2, version = ?3, glyph_count = ?4 WHERE id = ?5",
-                params![copy.path, copy.face_index, copy.version, copy.glyph_count, id],
+                "UPDATE face SET path = ?1, face_index = ?2, version = ?3, glyph_count = ?4, width = ?5, features = ?6 WHERE id = ?7",
+                params![copy.path, copy.face_index, copy.version, copy.glyph_count, copy.width, copy.features.join(" "), id],
             )
             .map(|_| ())
             .map_err(err)
@@ -356,6 +404,7 @@ fn face_from_row(r: &Row) -> rusqlite::Result<Face> {
         style: r.get("style")?,
         full_name: r.get("full_name")?,
         weight: r.get("weight")?,
+        width: r.get("width")?,
         italic: r.get("italic")?,
         mono: r.get("mono")?,
         classification: r.get("classification")?,
@@ -366,6 +415,7 @@ fn face_from_row(r: &Row) -> rusqlite::Result<Face> {
         copyright: r.get("copyright")?,
         glyph_count: r.get("glyph_count")?,
         variable: r.get("variable")?,
+        features: r.get::<_, Option<String>>("features")?.unwrap_or_default().split_whitespace().map(str::to_owned).collect(),
         starred: r.get("starred")?,
         added_at: r.get("added_at")?,
     })
