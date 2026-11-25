@@ -677,6 +677,7 @@ pub fn run() {
             libraries::switch_library,
             libraries::move_library,
             libraries::forget_library,
+            libraries::set_view_only,
             set_starred,
             create_collection,
             rename_collection,

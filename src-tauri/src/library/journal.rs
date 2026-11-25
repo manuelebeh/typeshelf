@@ -209,6 +209,18 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+/// Whether `device` may add to its journal: false on a read-only share or folder.
+pub fn writable(root: &Path, device: &str) -> bool {
+    let own = path_for(root, device);
+    if own.exists() {
+        return fs::OpenOptions::new().append(true).open(own).is_ok();
+    }
+    let probe = root.join(FOLDER).join(format!(".{device}.probe"));
+    let created = fs::File::create(&probe).is_ok();
+    let _ = fs::remove_file(probe);
+    created
+}
+
 /// Whether a sync service still keeps a journal as a placeholder (iCloud: `.name.jsonl.icloud`).
 pub fn pending(root: &Path) -> bool {
     fs::read_dir(root.join(FOLDER))

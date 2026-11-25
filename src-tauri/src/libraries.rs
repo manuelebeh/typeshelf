@@ -102,6 +102,17 @@ pub fn forget(state: &AppState, id: &str) -> CmdResult<()> {
     machine(state).forget(id)?;
     let _ = std::fs::remove_file(manage::cache_path(&state.data_dir, id));
     let _ = std::fs::remove_file(manage::head_path(&state.data_dir, id));
+    machine(state).set_setting(&manage::view_only_key(id), "0")?;
+    Ok(())
+}
+
+/// Whether this computer only reads a library. Other computers are not affected.
+pub fn view_only(state: &AppState, id: &str, view_only: bool) -> CmdResult<()> {
+    machine(state).set_setting(&manage::view_only_key(id), if view_only { "1" } else { "0" })?;
+    let open = current(state);
+    if open.id == id {
+        open.lock().set_view_only(view_only);
+    }
     Ok(())
 }
 
@@ -133,6 +144,11 @@ pub async fn switch_library(app: AppHandle, id: String) -> CmdResult<()> {
 #[tauri::command]
 pub async fn move_library(app: AppHandle, id: String, parent: String) -> CmdResult<()> {
     blocking(app, move |state| relocate(state, &id, Path::new(&parent), &activation::Activator::SYSTEM)).await
+}
+
+#[tauri::command]
+pub fn set_view_only(state: State<AppState>, id: String, enabled: bool) -> CmdResult<()> {
+    view_only(&state, &id, enabled)
 }
 
 #[tauri::command]

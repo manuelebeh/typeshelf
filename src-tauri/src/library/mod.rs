@@ -30,6 +30,8 @@ pub struct Opener<'a> {
     /// Where this computer notes how far it has written, to notice when someone else writes
     /// under its id.
     pub head: &'a Path,
+    /// This computer asked to only read the library.
+    pub view_only: bool,
 }
 
 pub struct OpenLibrary {
@@ -48,7 +50,12 @@ pub struct Session {
     /// Last position written in this computer's journal.
     seq: u64,
     clock: Clock,
-    read_only: bool,
+    /// The library itself asks for it, or holds changes this version does not know.
+    shared_read_only: bool,
+    writable: bool,
+    view_only: bool,
+    /// The folder can be reached. Otherwise only the cache is left.
+    connected: bool,
     head: PathBuf,
     /// Part of the library has not arrived on this computer yet.
     waiting: bool,
@@ -100,20 +107,17 @@ impl OpenLibrary {
         if let Some(parent) = who.cache.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
-        let mut session = Session {
-            db: Db::open(who.cache)?,
-            root: root.to_path_buf(),
-            device_id: who.device_id.into(),
-            device_name: who.device_name.into(),
-            devices: HashMap::new(),
-            seq: 0,
-            clock: Clock::default(),
-            read_only: false,
-            head: who.head.to_path_buf(),
-            waiting: false,
-        };
+        let mut session = Session::new(root, who)?;
         session.load()?;
         Ok(OpenLibrary { id, root: root.to_path_buf(), session: Mutex::new(session) })
+    }
+
+    /// A library whose folder cannot be reached, as its cache last saw it.
+    pub fn offline(id: &str, root: &Path, who: &Opener) -> R<OpenLibrary> {
+        if !who.cache.is_file() {
+            return Err(format!("{} cannot be reached", root.display()));
+        }
+        Ok(OpenLibrary { id: id.into(), root: root.to_path_buf(), session: Mutex::new(Session::new(root, who)?) })
     }
 
     /// Writes an empty package at `root`, which must not exist or be an empty folder.
@@ -149,6 +153,25 @@ impl OpenLibrary {
 }
 
 impl Session {
+    /// Over the cache as it is: nothing has been read from the library yet.
+    fn new(root: &Path, who: &Opener) -> R<Session> {
+        Ok(Session {
+            db: Db::open(who.cache)?,
+            root: root.to_path_buf(),
+            device_id: who.device_id.into(),
+            device_name: who.device_name.into(),
+            devices: HashMap::new(),
+            seq: 0,
+            clock: Clock::default(),
+            shared_read_only: false,
+            writable: false,
+            view_only: who.view_only,
+            connected: false,
+            head: who.head.to_path_buf(),
+            waiting: false,
+        })
+    }
+
     /// Brings the cache up to date with what the journals now hold.
     fn load(&mut self) -> R<()> {
         let manifest = manifest::read(&self.root)?;
@@ -183,7 +206,9 @@ impl Session {
             .collect();
         self.seq = seq;
         self.clock = events.last().map(|e| e.t).unwrap_or_default().max(self.clock);
-        self.read_only = manifest.read_only || newer || manifest.format > manifest::FORMAT;
+        self.shared_read_only = manifest.read_only || newer || manifest.format > manifest::FORMAT;
+        self.writable = journal::writable(&self.root, &self.device_id);
+        self.connected = true;
         self.db.rebuild(&events, &Here { root: &self.root, device_id: &self.device_id, devices: &self.devices })
     }
 
@@ -198,13 +223,17 @@ impl Session {
     }
 
     pub fn read_only(&self) -> bool {
-        self.read_only
+        !self.connected || !self.writable || self.shared_read_only || self.view_only
+    }
+
+    pub fn set_view_only(&mut self, view_only: bool) {
+        self.view_only = view_only;
     }
 
     /// Records changes in this computer's journal, then applies them to the cache. Whatever they
     /// need must have been checked before: a journal line cannot be taken back.
     pub fn commit(&mut self, ops: Vec<Op>) -> R<()> {
-        if self.read_only {
+        if self.read_only() {
             return Err("This library is view-only".into());
         }
         if ops.is_empty() {
@@ -345,7 +374,8 @@ mod tests {
         pub fn open(&self, device: &str) -> OpenLibrary {
             let cache = self.dir.join(format!("{device}.sqlite"));
             let head = self.dir.join(format!("{device}.head"));
-            OpenLibrary::open(&self.root, &Opener { device_id: device, device_name: device, cache: &cache, head: &head }).unwrap()
+            let who = Opener { device_id: device, device_name: device, cache: &cache, head: &head, view_only: false };
+            OpenLibrary::open(&self.root, &who).unwrap()
         }
 
         /// Writes lines into the journal of `device` with chosen clocks, as if made offline.
