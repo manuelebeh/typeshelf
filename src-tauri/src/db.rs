@@ -189,6 +189,18 @@ impl Db {
         tx.commit().map_err(err)
     }
 
+    /// Points a library face at another copy of the same font. Its id is kept, and with it
+    /// the favourite flag, collections and tags.
+    pub fn repoint_face(&self, id: &str, copy: &Face) -> R<()> {
+        self.conn
+            .execute(
+                "UPDATE face SET path = ?1, face_index = ?2, version = ?3, glyph_count = ?4 WHERE id = ?5",
+                params![copy.path, copy.face_index, copy.version, copy.glyph_count, id],
+            )
+            .map(|_| ())
+            .map_err(err)
+    }
+
     pub fn path_in_use(&self, path: &str) -> R<bool> {
         self.conn.query_row("SELECT EXISTS(SELECT 1 FROM face WHERE path = ?1)", [path], |r| r.get(0)).map_err(err)
     }
