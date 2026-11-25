@@ -187,7 +187,7 @@ fn import_blocking(state: &AppState, paths: Vec<String>, copy: bool) -> CmdResul
         if fresh.is_empty() {
             continue;
         }
-        let final_path = if copy {
+        let final_path = if should_copy(&library.root, &file, copy) {
             match copy_into_library(&library.fonts_dir(), &file, &fresh[0].family) {
                 Ok(p) => p,
                 Err(_) => {
@@ -206,6 +206,14 @@ fn import_blocking(state: &AppState, paths: Vec<String>, copy: bool) -> CmdResul
     }
     summary.imported = library.lock().add_faces(&pending)?;
     Ok(summary)
+}
+
+/// Whether importing `file` into the library at `root` copies it there. A shared library
+/// copies even when not asked to, since other computers cannot reach this one's folders. OS
+/// fonts stay references: each computer has its own copy.
+fn should_copy(root: &Path, file: &Path, asked: bool) -> bool {
+    let shared = library::location::shared_by(root).is_some() && !fonts::is_system_path(file);
+    (asked || shared) && !file.starts_with(root)
 }
 
 fn file_name(path: &Path) -> String {
@@ -780,6 +788,19 @@ mod tests {
             commit(state, Op::SetCreate { id: "s1".into(), name: "Bold".into(), query: "{}".into(), created_at: 1 }).unwrap();
             SetIds("s1".into())
         }
+    }
+
+    #[test]
+    fn shared_libraries_always_copy() {
+        let local = Path::new("/home/a/Fonts.typeshelf");
+        let shared = Path::new("/home/a/Dropbox/Team.typeshelf");
+        let file = Path::new("/home/a/Downloads/x.ttf");
+        assert!(!should_copy(local, file, false) && should_copy(local, file, true));
+        assert!(should_copy(shared, file, false));
+        // Already inside the package, as downloaded Google fonts are.
+        assert!(!should_copy(shared, &shared.join("Fonts").join("x.ttf"), true));
+        let system = fonts::system_font_dirs().remove(0).join("x.ttf");
+        assert!(!should_copy(shared, &system, false) && should_copy(shared, &system, true));
     }
 
     #[test]
