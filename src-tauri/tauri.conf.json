@@ -35,6 +35,29 @@
     "active": true,
     "targets": "all",
     "category": "GraphicsAndDesign",
+    "fileAssociations": [
+      {
+        "ext": ["typeshelf"],
+        "name": "Typeshelf Library",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "dev.typeshelf.app.library",
+          "conformsTo": ["com.apple.package", "public.composite-content"]
+        }
+      },
+      {
+        "ext": ["tslibrary"],
+        "name": "Typeshelf Library Manifest",
+        "mimeType": "application/x-typeshelf-library",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "dev.typeshelf.app.library-manifest",
+          "conformsTo": ["public.json"]
+        }
+      }
+    ],
     "shortDescription": "Font manager",
     "icon": [
       "icons/32x32.png",

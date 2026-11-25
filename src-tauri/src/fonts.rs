@@ -75,6 +75,8 @@ pub fn scan(path: &Path, added_at: i64) -> Result<Vec<Face>, String> {
             features: feature_tags(&face),
             starred: false,
             added_at,
+            available: true,
+            imported_on: None,
         });
     }
     Ok(faces)

@@ -27,6 +27,12 @@ export interface Face {
   features: string[];
   starred: boolean;
   addedAt: number;
+  /** The file can be found on this computer. */
+  available: boolean;
+  /** The other computer that imported a file kept outside the library. */
+  importedOn: string | null;
+  /** Interface only: the installed copy shown in place of a library file that is not here. */
+  previewId?: string;
 }
 
 export interface Collection {
@@ -52,7 +58,27 @@ export interface SmartSet {
   createdAt: number;
 }
 
+export interface LibraryInfo {
+  id: string;
+  name: string;
+  /** The package folder. */
+  path: string;
+  current: boolean;
+  /** The folder can be reached. */
+  connected: boolean;
+}
+
+export interface OpenOutcome {
+  /** Set when nothing was opened: the folder is a copy of the library at this path. */
+  duplicateOf: string | null;
+}
+
 export interface Library {
+  id: string;
+  name: string;
+  /** The package folder. */
+  root: string;
+  readOnly: boolean;
   faces: Face[];
   collections: Collection[];
   membership: Record<string, string[]>;
@@ -167,6 +193,14 @@ export const api = {
   insights: (refresh: boolean) => invoke<Insights>("insights", { refresh }),
   trashCopies: (paths: string[]) => invoke<string[]>("trash_copies", { paths }),
   loadLibrary: () => invoke<Library>("load_library"),
+  listLibraries: () => invoke<LibraryInfo[]>("list_libraries"),
+  createLibrary: (path: string) => invoke<void>("create_library", { path }),
+  openLibrary: (path: string, asCopy: boolean) => invoke<OpenOutcome>("open_library", { path, asCopy }),
+  switchLibrary: (id: string) => invoke<void>("switch_library", { id }),
+  moveLibrary: (id: string, parent: string) => invoke<void>("move_library", { id, parent }),
+  forgetLibrary: (id: string) => invoke<void>("forget_library", { id }),
+  takePendingOpen: () => invoke<string[]>("take_pending_open"),
+  deactivateAll: () => invoke<string[]>("deactivate_all"),
   systemFonts: () => invoke<Face[]>("system_fonts"),
   importPaths: (paths: string[], copy: boolean) => invoke<ImportSummary>("import_paths", { paths, copy }),
   removeFamilies: (families: string[]) => invoke<string[]>("remove_families", { families }),
@@ -198,5 +232,5 @@ export const api = {
   languageSupport: (id: string, samples: string[]) => invoke<boolean[]>("language_support", { id, samples }),
 };
 
-/** URL served by the Rust `tsfont` protocol for one face. */
-export const fontURL = (faceId: string) => convertFileSrc(faceId, "tsfont");
+/** URL served by the Rust `tsfont` protocol for one face of the open library or of the system. */
+export const fontURL = (libraryId: string, faceId: string) => convertFileSrc(`${libraryId}~${faceId}`, "tsfont");

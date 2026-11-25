@@ -29,6 +29,10 @@ pub struct Face {
     pub features: Vec<String>,
     pub starred: bool,
     pub added_at: i64,
+    /// The file can be found on this computer.
+    pub available: bool,
+    /// The other computer that imported a font it kept outside the library.
+    pub imported_on: Option<String>,
 }
 
 /// A label applied to families. Manual tags list their faces explicitly; smart tags
@@ -94,6 +98,11 @@ impl Scope {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Library {
+    pub id: String,
+    pub name: String,
+    /// The package folder.
+    pub root: String,
+    pub read_only: bool,
     pub faces: Vec<Face>,
     pub collections: Vec<Collection>,
     /// collection id → face ids

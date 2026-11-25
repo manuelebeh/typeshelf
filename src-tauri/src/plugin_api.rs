@@ -5,8 +5,9 @@
 //! own host names (no DNS rebinding), must not carry a web `Origin`, and activation needs
 //! a custom header, which browsers only send after a CORS preflight that is never granted.
 
-use crate::model::Scope;
-use crate::{activation, fonts, google, google_cache, import_blocking, lock, now, system_scan, AppState};
+use crate::library::manage;
+use crate::model::{Face, Scope};
+use crate::{activation, current, fonts, google, google_cache, import_blocking, machine, now, system_scan, AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -315,28 +316,37 @@ fn os_has(name: &str, system: &HashSet<&str>) -> bool {
     system.contains(name) || activation::font_available(name) == Some(true)
 }
 
+/// The faces whose files are here, from every known library. The open one comes first.
+fn library_faces(state: &AppState) -> Vec<Face> {
+    let open = current(state);
+    let mut faces = open.lock().faces().unwrap_or_default();
+    faces.extend(manage::faces_elsewhere(&state.data_dir, &machine(state), &open.id).unwrap_or_default());
+    faces.retain(|f| Path::new(&f.path).exists());
+    faces
+}
+
 /// Read-only: which of these fonts can already be used, and which the library holds.
 pub fn font_status(state: &AppState, names: &[String]) -> Vec<FontStatus> {
     let scan = system_scan(state);
     let system: HashSet<&str> = scan.unique.iter().map(|f| f.ps_name.as_str()).collect();
-    let db = lock(state);
-    let library = db.faces().unwrap_or_default();
+    let library = library_faces(state);
+    let machine = machine(state);
     names
         .iter()
         .map(|name| {
             let face = library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name));
-            let active =
-                face.is_some_and(|f| fonts::is_system_path(Path::new(&f.path)) || db.scope_of(&f.path).is_ok_and(|s| s != Scope::None));
+            let active = face
+                .is_some_and(|f| fonts::is_system_path(Path::new(&f.path)) || machine.scope_of(&f.path).is_ok_and(|s| s != Scope::None));
             FontStatus { name: name.clone(), available: active || os_has(name, &system), in_library: face.is_some() }
         })
         .collect()
 }
 
 fn activate_path(state: &AppState, path: &str, scope: Scope) -> Result<(), String> {
-    let db = lock(state);
-    let previous = db.scope_of(path)?;
+    let machine = machine(state);
+    let previous = machine.scope_of(path)?;
     activation::activate(Path::new(path), scope, previous)?;
-    db.set_scope(path, scope)
+    machine.set_scope(path, scope)
 }
 
 /// Resolves each PostScript name: installed on the system, already active, activated from
@@ -354,7 +364,7 @@ pub fn activate_fonts(state: &AppState, names: &[String], scope: Scope, google: 
     let mut to_activate: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut missing: Vec<String> = Vec::new();
 
-    let library = lock(state).faces().unwrap_or_default();
+    let library = library_faces(state);
     for name in &wanted {
         let face = library.iter().find(|f| &f.ps_name == name).or_else(|| library.iter().find(|f| f.ps_name.eq_ignore_ascii_case(name)));
         match face {
@@ -362,7 +372,7 @@ pub fn activate_fonts(state: &AppState, names: &[String], scope: Scope, google: 
                 results.insert(name.clone(), FontResult { family: Some(face.family.clone()), ..FontResult::new(name, "system") });
             }
             Some(face) => {
-                let current = lock(state).scope_of(&face.path).unwrap_or(Scope::None);
+                let current = machine(state).scope_of(&face.path).unwrap_or(Scope::None);
                 let status = if current == Scope::None { "activated" } else { "active" };
                 if current == Scope::None {
                     to_activate.entry(face.path.clone()).or_default().push(name.clone());
@@ -404,6 +414,14 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
     let Ok(catalog) = google::catalog(&google_cache(state), false, now()) else {
         return missing;
     };
+    // Downloads go into the open library.
+    if current(state).lock().read_only() {
+        for name in &missing {
+            let message = Some("This library is view-only".into());
+            results.insert(name.clone(), FontResult { message, ..FontResult::new(name, "error") });
+        }
+        return Vec::new();
+    }
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut still = Vec::new();
     for name in missing {
@@ -415,7 +433,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
     }
     for (family, names) in groups {
         let entry = catalog.families.iter().find(|f| f.family == family).expect("family from the catalog");
-        let fetched = google::download(entry, &state.fonts_dir.join("Google Fonts")).and_then(|files| {
+        let fetched = google::download(entry, &current(state).fonts_dir().join("Google Fonts")).and_then(|files| {
             let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
             import_blocking(state, paths.clone(), false)?;
             Ok(paths)
@@ -433,7 +451,7 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
             }
         };
         let errors: Vec<String> = paths.iter().filter_map(|p| activate_path(state, p, scope).err()).collect();
-        let library = lock(state).faces().unwrap_or_default();
+        let library = current(state).lock().faces().unwrap_or_default();
         let known: BTreeSet<&str> = library.iter().filter(|f| paths.contains(&f.path)).map(|f| f.ps_name.as_str()).collect();
         for name in names {
             let found = known.contains(name.as_str()) || known.iter().any(|k| k.eq_ignore_ascii_case(&name));
@@ -457,17 +475,9 @@ fn fetch_from_google(state: &AppState, missing: Vec<String>, scope: Scope, resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
-    use std::sync::{Mutex, RwLock};
 
     fn temp_state() -> AppState {
-        let root = std::env::temp_dir().join(format!("typeshelf-api-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join("Fonts")).unwrap();
-        AppState {
-            db: Mutex::new(Db::open(&root.join("library.sqlite")).unwrap()),
-            fonts_dir: root.join("Fonts"),
-            system: RwLock::new(None),
-        }
+        AppState::for_tests(&std::env::temp_dir().join(format!("typeshelf-api-{}", uuid::Uuid::new_v4())))
     }
 
     fn req<'a>(method: &'a str, url: &'a str, body: &'a str) -> Request<'a> {
@@ -580,5 +590,31 @@ mod tests {
     fn guesses_google_family_from_postscript_name() {
         assert_eq!(family_key("PlayfairDisplay-BoldItalic"), squash("Playfair Display"));
         assert_eq!(family_key("Inter"), "inter");
+    }
+
+    #[test]
+    fn plugin_api_finds_fonts_in_other_libraries() {
+        let data = std::env::temp_dir().join(format!("typeshelf-api-{}", uuid::Uuid::new_v4()));
+        let state = AppState::for_tests(&data);
+        let font = current(&state).fonts_dir().join("elsewhere.ttf");
+        std::fs::write(&font, b"font").unwrap();
+        let face: Face = serde_json::from_value(json!({
+            "id": "f1", "path": font, "faceIndex": 0, "psName": "TypeshelfElsewhere-Regular", "family": "Typeshelf Elsewhere",
+            "style": "Regular", "fullName": "Typeshelf Elsewhere", "weight": 400, "width": 5, "italic": false, "mono": false,
+            "classification": "sans", "version": null, "designer": null, "manufacturer": null, "license": null,
+            "copyright": null, "glyphCount": 1, "variable": false, "features": [], "starred": false, "addedAt": 0,
+            "available": true, "importedOn": null
+        }))
+        .unwrap();
+        current(&state).lock().add_faces(std::slice::from_ref(&face)).unwrap();
+        crate::libraries::create(&state, data.join("Other")).unwrap();
+        assert!(current(&state).lock().faces().unwrap().is_empty());
+
+        let names = [face.ps_name.clone()];
+        assert!(font_status(&state, &names)[0].in_library);
+        // A file that is not there is as good as not in the library.
+        std::fs::remove_file(&font).unwrap();
+        assert!(!font_status(&state, &names)[0].in_library);
+        let _ = std::fs::remove_dir_all(data);
     }
 }
