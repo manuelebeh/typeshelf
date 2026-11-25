@@ -5,6 +5,7 @@
 pub mod journal;
 pub mod manage;
 pub mod manifest;
+pub mod migrate;
 
 use crate::db::{Db, Here};
 use crate::fonts;

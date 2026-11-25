@@ -23,6 +23,17 @@ use macos as platform;
 #[cfg(windows)]
 use windows as platform;
 
+/// Registering and unregistering a file that is not recorded as active, so that moves can be
+/// tested without touching the fonts of the system.
+pub struct Activator<'a> {
+    pub on: &'a dyn Fn(&Path, Scope) -> Result<(), String>,
+    pub off: &'a dyn Fn(&Path, Scope) -> Result<(), String>,
+}
+
+impl Activator<'static> {
+    pub const SYSTEM: Self = Activator { on: &|path, scope| activate(path, scope, Scope::None), off: &deactivate };
+}
+
 /// Registers `path` with `scope`. `previous` is the scope Typeshelf last recorded.
 pub fn activate(path: &Path, scope: Scope, previous: Scope) -> Result<(), String> {
     if scope == Scope::None {

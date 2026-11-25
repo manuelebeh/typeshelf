@@ -90,6 +90,8 @@ impl AppState {
     fn new(data_dir: PathBuf) -> CmdResult<AppState> {
         fs::create_dir_all(&data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
         let machine = MachineDb::open(&data_dir.join("machine.sqlite"))?;
+        library::migrate::run(&data_dir, &machine, &activation::Activator::SYSTEM, now())?;
+        activation::finish_batch();
         let library = manage::startup(&data_dir, &machine, now())?;
         Ok(AppState { data_dir, machine: Mutex::new(machine), library: RwLock::new(Arc::new(library)), system: RwLock::new(None) })
     }
