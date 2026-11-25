@@ -10,10 +10,12 @@ const createPanel = require("./panel-core.js");
 const BASE = "http://localhost:47391";
 
 function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(createPanel.t("Typeshelf is not responding"))), ms)),
-  ]);
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(createPanel.t("Typeshelf is not responding"))), ms);
+  });
+  // Cleared: the panel polls every second, and long timers would pile up.
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
 async function call(method, path, body) {
