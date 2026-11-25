@@ -3,6 +3,7 @@
 //! journals; what is written goes through [`Session::commit`].
 
 pub mod journal;
+pub mod location;
 pub mod manage;
 pub mod manifest;
 pub mod migrate;
@@ -59,6 +60,8 @@ pub struct Session {
     head: PathBuf,
     /// Part of the library has not arrived on this computer yet.
     waiting: bool,
+    /// The latest change made elsewhere: computer name and Unix time.
+    last_change: Option<(String, i64)>,
     /// The files as they were when last read.
     stamp: journal::Stamp,
 }
@@ -171,6 +174,7 @@ impl Session {
             connected: false,
             head: who.head.to_path_buf(),
             waiting: false,
+            last_change: None,
             stamp: journal::Stamp::new(),
         })
     }
@@ -230,6 +234,11 @@ impl Session {
                 _ => None,
             })
             .collect();
+        self.last_change = events
+            .iter()
+            .rev()
+            .find(|e| e.dev != self.device_id && !matches!(e.op, Op::Device { .. }))
+            .and_then(|e| Some((self.devices.get(&e.dev)?.clone(), (e.t.0 / 1000) as i64)));
         self.seq = seq;
         self.clock = events.last().map(|e| e.t).unwrap_or_default().max(self.clock);
         self.shared_read_only = manifest.read_only || newer || manifest.format > manifest::FORMAT;
@@ -244,9 +253,20 @@ impl Session {
         &self.device_id
     }
 
-    #[allow(dead_code)] // Shown by the library status.
     pub fn waiting(&self) -> bool {
         self.waiting
+    }
+
+    pub fn connected(&self) -> bool {
+        self.connected
+    }
+
+    pub fn view_only_choice(&self) -> bool {
+        self.view_only
+    }
+
+    pub fn last_change(&self) -> Option<(String, i64)> {
+        self.last_change.clone()
     }
 
     pub fn read_only(&self) -> bool {

@@ -97,12 +97,29 @@ impl Scope {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Change {
+    pub device: String,
+    pub at: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Library {
     pub id: String,
     pub name: String,
     /// The package folder.
     pub root: String,
     pub read_only: bool,
+    /// The folder can be reached. Otherwise this is what was last seen.
+    pub connected: bool,
+    /// Part of the library has not arrived on this computer yet.
+    pub waiting: bool,
+    /// This computer chose to only read it.
+    pub view_only_choice: bool,
+    /// The sync service or drive that shares the folder (see `library::location`).
+    pub shared_by: Option<&'static str>,
+    /// The latest change made on another computer.
+    pub last_change: Option<Change>,
     pub faces: Vec<Face>,
     pub collections: Vec<Collection>,
     /// collection id → face ids
