@@ -299,8 +299,8 @@ function applyFont(name) {
   return { ok: true, count: found.layers.length };
 }
 
-/** Carries out one command from Typeshelf and reports how it went. */
-function run(command, retries) {
+/** Carries out one command from Typeshelf, reports how it went, then calls `done`. */
+function run(command, retries, done) {
   var outcome;
   try {
     outcome = command.kind === "apply" ? applyFont(command.font) : readSelection();
@@ -311,7 +311,7 @@ function run(command, retries) {
     // A font activated a moment ago may not be listed yet.
     if (retries > 0) {
       setTimeout(function () {
-        run(command, retries - 1);
+        run(command, retries - 1, done);
       }, APPLY_RETRY_MS);
       return;
     }
@@ -319,7 +319,32 @@ function run(command, retries) {
   }
   outcome.id = command.id;
   outcome.kind = command.kind;
-  request("POST", "/v1/bridge/result", outcome, function () {}, 3);
+  try {
+    request("POST", "/v1/bridge/result", outcome, function () {}, 3);
+  } finally {
+    done();
+  }
+}
+
+/**
+ * Commands run one at a time, in order: one waiting for its font must not be overtaken, and then
+ * undone, by the next.
+ */
+function commandQueue() {
+  var pending = [];
+  var busy = false;
+  function next() {
+    if (busy || !pending.length) return;
+    busy = true;
+    run(pending.shift(), APPLY_RETRIES, function () {
+      busy = false;
+      next();
+    });
+  }
+  return function (command) {
+    pending.push(command);
+    next();
+  };
 }
 
 /**
@@ -333,6 +358,7 @@ function startBridge() {
   var me = String(Date.now()) + String(Math.random());
   shared.setObject_forKey(me, "typeshelf.loop");
   coscript.setShouldKeepAround(true);
+  var enqueue = commandQueue();
 
   function poll() {
     // A newer loop took over.
@@ -351,9 +377,7 @@ function startBridge() {
       function (error, res) {
         setTimeout(poll, error ? IDLE_MS : POLL_MS);
         if (!error) {
-          (res.commands || []).forEach(function (command) {
-            run(command, APPLY_RETRIES);
-          });
+          (res.commands || []).forEach(enqueue);
         }
       },
       3,
