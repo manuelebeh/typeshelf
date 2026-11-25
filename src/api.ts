@@ -199,6 +199,37 @@ export interface PluginActivity {
   missing: string[];
 }
 
+/** A design application whose Typeshelf plugin is running. */
+export interface ConnectedApp {
+  name: string;
+  document: string | null;
+  can: ("apply" | "selection")[];
+}
+
+/** The text selected in a design application, with the style of its first character. */
+export interface DesignSelection {
+  text: string;
+  /** PostScript name. */
+  font: string | null;
+  size: number | null;
+  /** `#rrggbb`. */
+  color: string | null;
+  /** Thousandths of an em. */
+  tracking: number | null;
+  count: number;
+}
+
+/** What a plugin answered, or a selection it sent on its own (`id` is then null). */
+export interface BridgeResult {
+  client: string;
+  id: number | null;
+  kind: "apply" | "selection";
+  ok: boolean;
+  error: string | null;
+  count: number;
+  selection: DesignSelection | null;
+}
+
 export const api = {
   insights: (refresh: boolean) => invoke<Insights>("insights", { refresh }),
   trashCopies: (paths: string[]) => invoke<string[]>("trash_copies", { paths }),
@@ -241,6 +272,9 @@ export const api = {
   pluginsList: () => invoke<PluginInstallState[]>("plugins_list"),
   pluginInstall: (id: string) => invoke<PluginInstallOutcome>("plugin_install", { id }),
   pluginUninstall: (id: string) => invoke<PluginInstallState>("plugin_uninstall", { id }),
+  bridgeApps: () => invoke<ConnectedApp[]>("bridge_apps"),
+  bridgeApply: (client: string, psName: string) => invoke<number>("bridge_apply", { client, psName }),
+  bridgeRequestSelection: (client: string) => invoke<number>("bridge_request_selection", { client }),
   languageSupport: (id: string, samples: string[]) => invoke<boolean[]>("language_support", { id, samples }),
 };
 

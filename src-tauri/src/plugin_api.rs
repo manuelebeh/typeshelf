@@ -1,10 +1,12 @@
 //! Local HTTP API used by the design-app plugins (Photoshop, Illustrator…) to activate
-//! the fonts a document needs, identified by their PostScript names.
+//! the fonts a document needs, identified by their PostScript names. The same plugins poll
+//! it for what Typeshelf wants done in their application (see `bridge`).
 //!
 //! It listens on 127.0.0.1 only. Web pages cannot use it: requests must name one of our
 //! own host names (no DNS rebinding), must not carry a web `Origin`, and activation needs
 //! a custom header, which browsers only send after a CORS preflight that is never granted.
 
+use crate::bridge::{self, Outcome, Selection};
 use crate::library::manage;
 use crate::model::{Face, Scope};
 use crate::{activation, current, fonts, google, google_cache, import_blocking, machine, now, system_scan, AppState};
@@ -15,6 +17,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const PORT: u16 = 47391;
@@ -64,6 +67,39 @@ pub struct Activity {
     client: String,
     activated: Vec<String>,
     missing: Vec<String>,
+}
+
+/// What a request asks of the main window.
+#[derive(Clone, Debug)]
+pub enum Event {
+    Activity(Activity),
+    Bridge(Outcome),
+}
+
+#[derive(Deserialize)]
+struct PollRequest {
+    #[serde(default)]
+    document: Option<String>,
+    #[serde(default)]
+    can: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct OutcomeRequest {
+    id: u64,
+    kind: String,
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    count: u32,
+    #[serde(default)]
+    selection: Option<Selection>,
+}
+
+#[derive(Deserialize)]
+struct SelectionRequest {
+    selection: Selection,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -161,7 +197,7 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
         let url = request.url().to_string();
         let mut body = String::new();
         let read = request.as_reader().take(MAX_BODY + 1).read_to_string(&mut body);
-        let (code, value, activity) = if read.is_err() || body.len() as u64 > MAX_BODY {
+        let (code, value, event) = if read.is_err() || body.len() as u64 > MAX_BODY {
             (413, error("Request too large"), None)
         } else {
             let state = app.state::<AppState>();
@@ -178,8 +214,21 @@ fn serve(app: &AppHandle, server: tiny_http::Server) {
                 },
             )
         };
-        if let Some(activity) = activity {
-            let _ = app.emit("plugin-activity", activity);
+        match event {
+            Some(Event::Activity(activity)) => {
+                let _ = app.emit("plugin-activity", activity);
+            }
+            Some(Event::Bridge(outcome)) => {
+                // A selection sent from the plugin's panel is looked at in Typeshelf.
+                if outcome.id.is_none() {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                }
+                let _ = app.emit("bridge-result", outcome);
+            }
+            None => {}
         }
         let content_type = tiny_http::Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap();
         let mut response = tiny_http::Response::from_string(if code == 204 { String::new() } else { value.to_string() })
@@ -223,7 +272,7 @@ fn guard(req: &Request) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) {
+pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Event>) {
     if !ENABLED.load(Ordering::Relaxed) {
         return (503, error("Plugin API turned off in the Typeshelf settings"), None);
     }
@@ -270,10 +319,65 @@ pub fn route(state: &AppState, req: &Request) -> (u16, Value, Option<Activity>) 
                 activated,
                 missing,
             });
-            (200, json!({ "results": results }), activity)
+            (200, json!({ "results": results }), activity.map(Event::Activity))
         }
+        ("POST", "/v1/bridge/poll") => with_body(req, |client, body: PollRequest| {
+            let commands = bridge::global().poll(Instant::now(), &client, body.document.as_deref(), &body.can);
+            (200, json!({ "commands": commands }), None)
+        }),
+        ("POST", "/v1/bridge/result") => with_body(req, |client, body: OutcomeRequest| {
+            let kind = match body.kind.as_str() {
+                bridge::APPLY => bridge::APPLY,
+                bridge::SELECTION => bridge::SELECTION,
+                _ => return (400, error("Unknown command kind"), None),
+            };
+            let outcome = Outcome {
+                client,
+                id: Some(body.id),
+                kind,
+                ok: body.ok,
+                error: body.error.map(|e| bridge::clip(&e, 300)),
+                count: body.count,
+                selection: body.selection.and_then(Selection::clean),
+            };
+            (200, json!({}), Some(Event::Bridge(outcome)))
+        }),
+        ("POST", "/v1/bridge/selection") => with_body(req, |client, body: SelectionRequest| {
+            let Some(selection) = body.selection.clean() else {
+                return (400, error("The selection has no text"), None);
+            };
+            let count = selection.count;
+            let outcome = Outcome { client, id: None, kind: bridge::SELECTION, ok: true, error: None, count, selection: Some(selection) };
+            (200, json!({}), Some(Event::Bridge(outcome)))
+        }),
         ("OPTIONS", _) => (403, error("Browser requests refused"), None),
         _ => (404, error("Unknown route"), None),
+    }
+}
+
+/// Reads a bridge request: it must name its client and carry a JSON body.
+fn with_body<T: serde::de::DeserializeOwned>(
+    req: &Request,
+    handle: impl FnOnce(String, T) -> (u16, Value, Option<Event>),
+) -> (u16, Value, Option<Event>) {
+    let Some(client) = req.client.map(|c| bridge::clip(c, 60)).filter(|c| !c.is_empty()) else {
+        return (403, error("Missing X-Typeshelf-Client header"), None);
+    };
+    match serde_json::from_str(req.body) {
+        Ok(body) => handle(client, body),
+        Err(e) => (400, error(&format!("Invalid JSON body: {e}")), None),
+    }
+}
+
+/// Activates the font if need be, then asks the plugin to apply it. Returns the command's id.
+pub fn apply_font(state: &AppState, client: &str, ps_name: &str) -> Result<u64, String> {
+    // Nothing is activated for an application that cannot take the font.
+    bridge::global().can(Instant::now(), client, bridge::APPLY)?;
+    let result = activate_fonts(state, &[ps_name.to_string()], Scope::Temporary, false).pop().ok_or("No font given")?;
+    match result.status {
+        "missing" => Err(format!("{ps_name} is not on this computer")),
+        "error" => Err(result.message.unwrap_or_else(|| format!("{ps_name} could not be activated"))),
+        _ => bridge::global().enqueue(Instant::now(), client, bridge::APPLY, Some(result.name)),
     }
 }
 
@@ -290,7 +394,7 @@ fn token_ok(given: Option<&str>) -> bool {
 /// reached from Figma's null-origin panel with the token. A preflight carries no token (browsers
 /// never send custom headers on it), so it is answered for the null origin only; the request that
 /// follows is what is authenticated.
-fn route_figma(state: &AppState, req: &Request, rest: &str) -> (u16, Value, Option<Activity>) {
+fn route_figma(state: &AppState, req: &Request, rest: &str) -> (u16, Value, Option<Event>) {
     let null_origin = req.origin == Some("null");
     if req.method == "OPTIONS" {
         return if null_origin { (204, Value::Null, None) } else { (403, error("Browser requests refused"), None) };
@@ -496,6 +600,13 @@ mod tests {
         });
     }
 
+    fn activity(event: Option<Event>) -> Activity {
+        match event {
+            Some(Event::Activity(activity)) => activity,
+            other => panic!("not an activity: {other:?}"),
+        }
+    }
+
     fn figma<'a>(method: &'a str, url: &'a str, body: &'a str) -> Request<'a> {
         Request { origin: Some("null"), token: Some(FIGMA_TOKEN), client: Some("Figma"), ..req(method, url, body) }
     }
@@ -523,10 +634,10 @@ mod tests {
         assert_eq!(route(&state, &figma("OPTIONS", "/v1/fonts/activate", "")).0, 403);
         // Fonts go through the same handlers as the other plugins.
         let body = json!({ "fonts": ["Nonexistent-Font-123"], "google": false }).to_string();
-        let (code, value, activity) = route(&state, &figma("POST", "/v1/figma/fonts/activate", &body));
+        let (code, value, event) = route(&state, &figma("POST", "/v1/figma/fonts/activate", &body));
         assert_eq!(code, 200);
         assert_eq!(value["results"][0]["status"], "missing");
-        assert_eq!(activity.unwrap().client, "Figma");
+        assert_eq!(activity(event).client, "Figma");
         assert_eq!(route(&state, &figma("POST", "/v1/figma/fonts/status", &body)).0, 200);
         assert_eq!(route(&state, &figma("GET", "/v1/figma/nope", "")).0, 404);
     }
@@ -554,7 +665,7 @@ mod tests {
         let mut fonts = vec!["Nonexistent-Font-123".to_string(), "Nonexistent-Font-123".to_string()];
         fonts.extend(installed.clone());
         let body = json!({ "fonts": fonts, "google": false }).to_string();
-        let (code, value, activity) = route(&state, &req("POST", "/v1/fonts/activate", &body));
+        let (code, value, event) = route(&state, &req("POST", "/v1/fonts/activate", &body));
         assert_eq!(code, 200);
         let results = value["results"].as_array().unwrap();
         assert_eq!(results.len(), 1 + usize::from(installed.is_some()), "duplicates removed");
@@ -562,7 +673,7 @@ mod tests {
         if installed.is_some() {
             assert_eq!(results[1]["status"], "system");
         }
-        assert_eq!(activity.unwrap().missing, ["Nonexistent-Font-123"]);
+        assert_eq!(activity(event).missing, ["Nonexistent-Font-123"]);
     }
 
     #[test]
@@ -590,6 +701,42 @@ mod tests {
     fn guesses_google_family_from_postscript_name() {
         assert_eq!(family_key("PlayfairDisplay-BoldItalic"), squash("Playfair Display"));
         assert_eq!(family_key("Inter"), "inter");
+    }
+
+    #[test]
+    fn plugins_poll_for_commands_and_report_back() {
+        let state = temp_state();
+        // The bridge is shared by every test: this name is only used here.
+        let client = "Bridge route test";
+        let named = |url, body| Request { client: Some(client), ..req("POST", url, body) };
+        let poll = r#"{"document":"poster.psd","can":["apply"]}"#;
+
+        for url in ["/v1/bridge/poll", "/v1/bridge/result", "/v1/bridge/selection"] {
+            assert_eq!(route(&state, &Request { client: None, ..req("POST", url, "{}") }).0, 403);
+            assert_eq!(route(&state, &named(url, "{")).0, 400);
+        }
+        assert!(apply_font(&state, client, "Helvetica").is_err(), "not connected yet");
+        assert_eq!(route(&state, &named("/v1/bridge/poll", poll)).1["commands"], json!([]));
+        assert!(apply_font(&state, client, "Nonexistent-Font-123").is_err());
+
+        let installed = system_scan(&state).unique.first().map(|f| f.ps_name.clone()).expect("at least one system font");
+        let id = apply_font(&state, client, &installed).unwrap();
+        let commands = route(&state, &named("/v1/bridge/poll", poll)).1["commands"].clone();
+        assert_eq!(commands, json!([{ "id": id, "kind": "apply", "font": installed }]));
+
+        let done = json!({ "id": id, "kind": "apply", "ok": true, "count": 2 }).to_string();
+        match route(&state, &named("/v1/bridge/result", &done)) {
+            (200, _, Some(Event::Bridge(o))) => assert_eq!((o.id, o.ok, o.count, o.client.as_str()), (Some(id), true, 2, client)),
+            other => panic!("unexpected {other:?}"),
+        }
+        let unknown = json!({ "id": id, "kind": "delete", "ok": true }).to_string();
+        assert_eq!(route(&state, &named("/v1/bridge/result", &unknown)).0, 400);
+
+        match route(&state, &named("/v1/bridge/selection", r##"{"selection":{"text":"Summer","color":"#ffcc00","count":1}}"##)) {
+            (200, _, Some(Event::Bridge(o))) => assert_eq!((o.id, o.selection.unwrap().text.as_str()), (None, "Summer")),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(route(&state, &named("/v1/bridge/selection", r#"{"selection":{"text":""}}"#)).0, 400);
     }
 
     #[test]

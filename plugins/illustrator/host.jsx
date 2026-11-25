@@ -53,3 +53,103 @@ function typeshelfDocumentFonts() {
   for (var k = 0; k < names.length; k++) lines.push((rendered[names[k]] ? "1" : "?") + "\t" + names[k]);
   return lines.join("\n");
 }
+
+/*
+ * The selected text: the range highlighted with the Type tool, or the whole content of each
+ * text object selected with the Selection tool. Empty ranges are left out.
+ */
+function typeshelfSelectedRanges() {
+  var selected = app.activeDocument.selection;
+  var ranges = [];
+  if (!selected) return ranges;
+  // A highlighted range is not an array, although it has a length.
+  if (selected.typename === "TextRange") {
+    if (selected.length > 0) ranges.push(selected);
+    return ranges;
+  }
+  for (var i = 0; i < selected.length; i++) {
+    if (selected[i].typename === "TextFrame" && selected[i].characters.length > 0) ranges.push(selected[i].textRange);
+  }
+  return ranges;
+}
+
+/* "#rrggbb" from a fill colour, converted roughly from CMYK and grey; "" for the others. */
+function typeshelfHex(color) {
+  var rgb;
+  if (color.typename === "RGBColor") rgb = [color.red, color.green, color.blue];
+  else if (color.typename === "CMYKColor") {
+    var k = 1 - color.black / 100;
+    rgb = [255 * (1 - color.cyan / 100) * k, 255 * (1 - color.magenta / 100) * k, 255 * (1 - color.yellow / 100) * k];
+  } else if (color.typename === "GrayColor") {
+    var level = 255 * (1 - color.gray / 100);
+    rgb = [level, level, level];
+  } else return "";
+  var out = "#";
+  for (var i = 0; i < 3; i++) out += (256 + Math.max(0, Math.min(255, Math.round(rgb[i])))).toString(16).slice(1);
+  return out;
+}
+
+/* "key<TAB>value" lines, values percent-encoded: the text may hold tabs and line breaks. */
+function typeshelfSelection() {
+  if (app.documents.length === 0) return "error\tno_document";
+  var ranges = typeshelfSelectedRanges();
+  if (!ranges.length) return "error\tno_selection";
+  var lines = ["text\t" + encodeURIComponent(ranges[0].contents), "count\t" + ranges.length];
+  function add(key, read) {
+    // Reading the style of a missing font raises an error: that value is simply left out.
+    try {
+      var value = read(ranges[0].characters[0].characterAttributes);
+      if (value !== "") lines.push(key + "\t" + encodeURIComponent(value));
+    } catch (e) {
+      /* unknown */
+    }
+  }
+  add("font", function (a) {
+    return a.textFont.name;
+  });
+  add("size", function (a) {
+    return a.size;
+  });
+  add("tracking", function (a) {
+    return a.tracking;
+  });
+  add("color", function (a) {
+    return typeshelfHex(a.fillColor);
+  });
+  return lines.join("\n");
+}
+
+/* False when the first letter of the range did not get the font. */
+function typeshelfTookFont(range, name) {
+  var letter = range.contents.search(/\S/);
+  if (letter < 0) return true;
+  try {
+    return range.characters[letter].characterAttributes.textFont.name === name;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* Applies a font, by PostScript name, to the selected text. */
+function typeshelfApplyFont(name) {
+  if (app.documents.length === 0) return "error\tno_document";
+  var ranges = typeshelfSelectedRanges();
+  if (!ranges.length) return "error\tno_selection";
+  var font;
+  try {
+    font = app.textFonts.getByName(name);
+  } catch (e) {
+    return "retry\t1";
+  }
+  for (var i = 0; i < ranges.length; i++) ranges[i].characterAttributes.textFont = font;
+  app.redraw();
+  // A font without these letters is silently left off them, but not off the spaces: undo it all.
+  for (var r = 0; r < ranges.length; r++) {
+    if (!typeshelfTookFont(ranges[r], name)) {
+      app.undo();
+      app.redraw();
+      return "error\tfont_refused";
+    }
+  }
+  return "count\t" + ranges.length;
+}

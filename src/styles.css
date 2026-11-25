@@ -397,6 +397,27 @@ body.resizing { cursor: col-resize; user-select: none; }
 .switch.on.mixed { background: var(--yellow); }
 .switch.on span { transform: translateX(12px); }
 
+/* ------------------------------------------------ preview in your design */
+
+.design-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin: 6px 22px 2px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+.design-bar[hidden] { display: none; }
+.design-bar strong { white-space: nowrap; }
+.design-bar button:disabled { opacity: 0.45; cursor: default; }
+.design-text { flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.current { background: var(--accent); color: #fff; }
+
 /* ------------------------------------------------ detail */
 
 .detail-pane {

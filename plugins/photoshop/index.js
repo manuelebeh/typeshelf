@@ -1,18 +1,21 @@
 /*
  * Typeshelf for Photoshop (UXP). Lists the fonts used by the text layers of the active
- * document and asks Typeshelf, running on this computer, to activate the missing ones.
+ * document and asks Typeshelf, running on this computer, to activate the missing ones. It also
+ * applies a font chosen in Typeshelf to the selected text layers, and sends their text there.
  */
-const { app, action, constants } = require("photoshop");
+const { app, action, constants, core } = require("photoshop");
 const createPanel = require("./panel-core.js");
 
 // Photoshop only allows host names declared in the manifest ("http://localhost"), not IPs.
 const BASE = "http://localhost:47391";
 
 function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(createPanel.t("Typeshelf is not responding"))), ms)),
-  ]);
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(createPanel.t("Typeshelf is not responding"))), ms);
+  });
+  // Cleared: the panel polls every second, and long timers would pile up.
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
 async function call(method, path, body) {
@@ -65,11 +68,33 @@ async function usedFonts(doc) {
   return [...names];
 }
 
-function installedFonts() {
-  const names = new Set();
-  const fonts = app.fonts;
-  for (let i = 0; i < fonts.length; i++) names.add(fonts[i].postScriptName);
-  return names;
+/**
+ * PostScript names of the fonts Photoshop lists. Read in one call: going through `app.fonts` takes
+ * several seconds with a thousand fonts, during which the panel cannot answer Typeshelf.
+ */
+async function installedFonts() {
+  const [result] = await action.batchPlay(
+    [{ _obj: "get", _target: [{ _property: "fontList" }, { _ref: "application", _enum: "ordinal", _value: "targetEnum" }] }],
+    {},
+  );
+  return new Set(result.fontList.fontPostScriptName);
+}
+
+/** The text layers selected in the Layers panel; or why there are none. */
+function selectedText() {
+  if (!app.documents.length) return { error: "no_document" };
+  const doc = app.activeDocument;
+  const layers = Array.from(doc.activeLayers).filter((layer) => layer.kind === constants.LayerKind.TEXT);
+  return layers.length ? { doc, layers } : { error: "no_selection" };
+}
+
+/** `#rrggbb`, or null for a colour Photoshop cannot express that way. */
+function hexColor(color) {
+  try {
+    return `#${color.rgb.hexValue}`;
+  } catch (e) {
+    return null;
+  }
 }
 
 const host = {
@@ -79,12 +104,48 @@ const host = {
     const doc = app.activeDocument;
     if (!doc) return null;
     const used = await usedFonts(doc);
-    const installed = installedFonts();
+    const installed = await installedFonts();
     // Photoshop keeps deactivated fonts in app.fonts: a listed font may still be missing.
     return {
       name: doc.title,
       fonts: used.map((name) => (installed.has(name) ? { name, installed: null, appLists: true } : { name, installed: false })),
     };
+  },
+  async selection() {
+    const { error, layers } = selectedText();
+    if (error) return { error };
+    const item = layers[0].textItem;
+    const style = item.characterStyle;
+    return {
+      text: item.contents,
+      font: style.font,
+      size: style.size,
+      color: hexColor(style.color),
+      tracking: style.tracking,
+      count: layers.length,
+    };
+  },
+  /** Sets the font of whole layers, as a single history step. */
+  async applyFont(name) {
+    const { error, doc, layers } = selectedText();
+    if (error) return { error };
+    if (!(await installedFonts()).has(name)) return { retry: true };
+    let refused = false;
+    await core.executeAsModal(
+      async (context) => {
+        const history = await context.hostControl.suspendHistory({ documentID: doc.id, name: "Typeshelf" });
+        for (const layer of layers) {
+          const style = layer.textItem.characterStyle;
+          style.font = name;
+          // Photoshop ignores some of the fonts it lists, without an error.
+          if (style.font !== name) refused = true;
+        }
+        // false: puts the layers back as they were.
+        await context.hostControl.resumeHistory(history, !refused);
+      },
+      { commandName: "Typeshelf" },
+    );
+    return refused ? { error: "font_refused" } : { count: layers.length };
   },
   onDocumentChange(cb) {
     action.addNotificationListener(["open", "select"], (event, descriptor) => {
