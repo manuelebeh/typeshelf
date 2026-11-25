@@ -59,6 +59,11 @@ pub fn resolve(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// Whether the OS may hand this path over to be opened as a library.
+pub fn is_library_path(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == EXTENSION) || path.file_name().is_some_and(|n| n == FILE)
+}
+
 /// What people see: the folder name without its extension.
 pub fn name_of(root: &Path) -> String {
     let name = if root.extension().is_some_and(|e| e == EXTENSION) { root.file_stem() } else { root.file_name() };
@@ -79,6 +84,7 @@ mod tests {
         for picked in [&root, &root.join(FILE), &parent] {
             assert_eq!(resolve(picked).unwrap(), root);
         }
+        assert!(is_library_path(&root) && is_library_path(&root.join(FILE)) && !is_library_path(&parent));
         assert_eq!((read(&root).unwrap().id.as_str(), name_of(&root).as_str()), ("l1", "Team Fonts"));
         assert!(resolve(&parent.join("missing")).is_err());
         let _ = fs::remove_dir_all(parent);

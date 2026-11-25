@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::http::{header, Response, StatusCode};
-use tauri::{AppHandle, Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
 struct AppState {
     data_dir: PathBuf,
@@ -29,6 +29,8 @@ struct AppState {
     library: RwLock<Arc<OpenLibrary>>,
     /// Fonts installed on the system, scanned in the background and cached.
     system: RwLock<Option<Arc<SystemScan>>>,
+    /// Libraries the OS asked to open, until the interface takes them.
+    pending_open: Mutex<Vec<String>>,
 }
 
 struct SystemScan {
@@ -94,7 +96,13 @@ impl AppState {
         library::migrate::run(&data_dir, &machine, &activation::Activator::SYSTEM, now())?;
         activation::finish_batch();
         let library = manage::startup(&data_dir, &machine, now())?;
-        Ok(AppState { data_dir, machine: Mutex::new(machine), library: RwLock::new(Arc::new(library)), system: RwLock::new(None) })
+        Ok(AppState {
+            data_dir,
+            machine: Mutex::new(machine),
+            library: RwLock::new(Arc::new(library)),
+            system: RwLock::new(None),
+            pending_open: Mutex::default(),
+        })
     }
 
     /// A state over a throwaway library under `root`.
@@ -605,9 +613,35 @@ async fn plugin_uninstall(app: AppHandle, id: String) -> CmdResult<plugin_instal
 
 // ---------------------------------------------------------------- entry point
 
+/// Keeps the libraries named by `paths` for the interface and tells it, when it listens already.
+fn request_open(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>) {
+    let libraries: Vec<String> =
+        paths.into_iter().filter(|p| library::manifest::is_library_path(p)).map(|p| p.to_string_lossy().into_owned()).collect();
+    if libraries.is_empty() {
+        return;
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        state.pending_open.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).extend(libraries);
+        let _ = app.emit("open-library", ());
+    }
+}
+
+#[tauri::command]
+fn take_pending_open(state: State<AppState>) -> Vec<String> {
+    std::mem::take(&mut state.pending_open.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // First: a second launch hands its files to the running app and stops.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            request_open(app, args.iter().skip(1).map(|a| Path::new(&cwd).join(a)));
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .register_uri_scheme_protocol("tsfont", |ctx, request| serve_font(ctx.app_handle(), request.uri().path()))
@@ -617,6 +651,8 @@ pub fn run() {
             reset_temporary(&state);
             reconcile_with_system(&state);
             app.manage(state);
+            // Windows and Linux pass the file that was double-clicked as an argument.
+            request_open(app.handle(), std::env::args_os().skip(1).map(PathBuf::from));
             // Warm the system font list so the sidebar fills quickly.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -634,6 +670,7 @@ pub fn run() {
             remove_families,
             set_activation,
             deactivate_all,
+            take_pending_open,
             libraries::list_libraries,
             libraries::create_library,
             libraries::open_library,
@@ -666,10 +703,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to start Typeshelf");
 
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
-            reset_temporary(&handle.state::<AppState>());
-        }
+    app.run(|handle, event| match event {
+        RunEvent::Exit => reset_temporary(&handle.state::<AppState>()),
+        #[cfg(target_os = "macos")]
+        RunEvent::Opened { urls } => request_open(handle, urls.iter().filter_map(|u| u.to_file_path().ok())),
+        _ => {}
     });
 }
 
