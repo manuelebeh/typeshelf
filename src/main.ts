@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type Library, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type Tag } from "./api";
+import { api, fontURL, type Face, type FaceDetails, type GoogleCatalog, type GoogleFamily, type DuplicateCopy, type DuplicateGroup, type Insights, type Library, type PluginActivity, type PluginApiStatus, type PluginInstallState, type Scope, type Tag } from "./api";
 import {
   categoryLabel,
   classOf,
@@ -21,6 +21,7 @@ import {
 } from "./google";
 import { hydrateIcons, icon } from "./icons";
 import { dateLocale, N_, setLanguage, t, tn, translateStatic, type Language } from "./i18n";
+import { fileName, selectByRule, selectionImpact, versionNumber, type SelectRule } from "./insights";
 import { matchesRule, parseRule, type Rule } from "./rules";
 import { GLYPH_GROUPS, LANGUAGES, specimen } from "./samples";
 import { editTag, TAG_COLORS, tagColor } from "./tags";
@@ -139,7 +140,15 @@ const state = {
   googleFilter: emptyGoogleFilter(),
   googleLimit: 120,
   googleQuery: "",
+  insights: null as Insights | null,
+  insightsError: null as string | null,
+  insightsView: "overview" as "overview" | "conflicts" | "duplicates",
+  /** Files ticked for the Trash. */
+  insightsSelected: new Set<string>(),
+  insightsLimit: 100,
 };
+
+const INSIGHTS_PAGE = 100;
 
 const GOOGLE_PAGE = 120;
 
@@ -664,6 +673,7 @@ function sidebarTitle(): string {
     inactive: t("Inactive"),
     recent: t("Recently added"),
     google: "Google Fonts",
+    insights: t("Insights"),
   };
   if (fixed[key]) return fixed[key];
   if (key.startsWith("class:")) return classLabels()[key.slice(6)] ?? t("Classification");
@@ -693,6 +703,7 @@ async function reload() {
   }
   ruleCache.clear();
   rebuild();
+  if (state.insights) loadInsights(false);
   const lib = state.lib;
   const gone =
     (state.sidebar.startsWith("col:") && !lib.collections.some((c) => `col:${c.id}` === state.sidebar)) ||
@@ -859,6 +870,7 @@ function render() {
 
 function renderSidebar() {
   const count = (key: string): number | string => {
+    if (key === "insights") return state.insights?.groups.length || "";
     if (key === "google") return state.google ? googleBase().length : state.googleLoading ? "…" : "";
     return state.systemLoading && (key === "system" || key === "all") ? "…" : state.families.filter((f) => matches(f, key)).length;
   };
@@ -895,6 +907,7 @@ function renderSidebar() {
     ${item("system", t("System fonts"), icon("system"))}
     ${item("library", t("Imported"), icon("imported"))}
     ${item("recent", t("Recently added"), icon("recent"))}
+    ${item("insights", t("Insights"), icon("insights"))}
     ${section(t("Status"))}
     ${item("active", t("Active"), icon("active"))}
     ${item("temporary", t("Temporary"), icon("temporary"))}
@@ -973,6 +986,9 @@ function renderGoogleFilterBar(bar: HTMLElement, n: number) {
 // ------------------------------------------------------------------ rendering: family list
 
 function renderList() {
+  $(".list-pane").classList.toggle("is-insights", isInsights());
+  $("#family-list").classList.toggle("insights", isInsights());
+  if (isInsights()) return renderInsights();
   renderFilterBar();
   if (isGoogle()) return renderGoogleList();
   const families = visibleFamilies();
@@ -1140,6 +1156,188 @@ function renderGoogleDetail(pane: HTMLElement, g: GoogleFamily) {
     </div>`;
 }
 
+// ------------------------------------------------------------------ insights: duplicates & conflicts
+
+const isInsights = () => state.sidebar === "insights";
+
+let insightsRequest = 0;
+
+async function loadInsights(refresh: boolean) {
+  const request = ++insightsRequest;
+  try {
+    const found = await api.insights(refresh);
+    if (request !== insightsRequest) return;
+    state.insights = found;
+    state.insightsError = null;
+    // Forget ticked files that are no longer listed.
+    const listed = new Set(found.groups.flatMap((g) => g.copies.map((c) => c.path)));
+    state.insightsSelected = new Set([...state.insightsSelected].filter((p) => listed.has(p)));
+  } catch (e) {
+    if (request !== insightsRequest) return;
+    state.insightsError = String(e);
+  }
+  renderSidebar();
+  if (isInsights()) renderList();
+}
+
+const insightsGroups = () => (state.insights?.groups ?? []).filter((g) => state.insightsView !== "conflicts" || g.conflict);
+
+const locationLabels = (): Record<DuplicateCopy["location"], string> => ({
+  library: t("Library"),
+  imported: t("Imported file"),
+  user: t("User folder"),
+  system: t("System"),
+});
+
+function renderInsights() {
+  $("#filter-bar").hidden = true;
+  previewObserver?.disconnect();
+  const list = $("#family-list");
+  list.classList.remove("rows");
+  const data = state.insights;
+  const view = state.insightsView;
+  $("#list-title").textContent = view === "conflicts" ? t("Conflicts") : view === "duplicates" ? t("Duplicates") : t("Insights");
+  const groups = insightsGroups();
+  $("#list-subtitle").textContent = data && view !== "overview" ? tn(groups.length, "{n} font", "{n} fonts") : "";
+  list.classList.toggle("is-empty", !data);
+  if (!data) {
+    list.innerHTML = state.insightsError
+      ? `<div class="empty"><p>${esc(state.insightsError)}</p><button data-insights="retry">${t("Try again")}</button></div>`
+      : `<div class="empty"><p>${t("Looking for duplicates…")}</p></div>`;
+    return;
+  }
+  list.innerHTML = view === "overview" ? renderInsightsOverview(data) : renderInsightsDetail(groups);
+}
+
+function renderInsightsOverview(data: Insights): string {
+  const conflicts = data.groups.filter((g) => g.conflict).length;
+  const number = (n: number) => n.toLocaleString(dateLocale());
+  const stat = (label: string, value: number, note = "") =>
+    `<div class="stat"><span class="stat-label">${esc(label)}</span><span class="stat-value">${number(value)}</span><span class="stat-note">${esc(note)}</span></div>`;
+  const card = (view: "conflicts" | "duplicates", label: string, value: number, note: string) =>
+    `<button class="stat look ${view}" data-insights="open" data-view-name="${view}" ${value ? "" : "disabled"}>
+       <span class="stat-label">${esc(label)}</span><span class="stat-value">${number(value)}</span><span class="stat-note">${esc(note)}</span>
+     </button>`;
+  return `<div class="stats">
+      ${stat(t("Fonts"), data.faces)}
+      ${stat(t("Active now"), data.activeFaces)}
+      ${stat(t("Extra copies"), data.extraCopies, data.extraCopies ? t("about {size}", { size: sizeOf(data.extraBytes) }) : "")}
+    </div>
+    <h2 class="insights-heading">${t("Needs a look")}</h2>
+    ${
+      data.groups.length
+        ? `<div class="stats">
+            ${card("conflicts", t("Conflicts"), conflicts, t("fonts that apps may mix up"))}
+            ${card("duplicates", t("Duplicates"), data.groups.length, t("fonts present in several files"))}
+          </div>`
+        : `<p class="muted">${t("No duplicates: every font comes from a single file.")}</p>`
+    }`;
+}
+
+function renderInsightsDetail(groups: DuplicateGroup[]): string {
+  const selected = selectionImpact(state.insights!.groups, state.insightsSelected).files;
+  const locations = locationLabels();
+  const row = (copy: DuplicateCopy) => {
+    const folder = copy.path.slice(0, -fileName(copy.path).length - 1);
+    const protectedHint = copy.trashable ? "" : t("Protected system folder: this file cannot be removed here.");
+    return `<div class="copy-row" title="${esc(protectedHint)}">
+      <input type="checkbox" data-path="${esc(copy.path)}" aria-label="${esc(copy.path)}" ${state.insightsSelected.has(copy.path) ? "checked" : ""} ${copy.trashable ? "" : "disabled"} />
+      <span class="copy-dot${copy.active ? " on" : ""}" title="${esc(copy.active ? t("Active now") : t("Not active"))}"></span>
+      <span class="copy-file">
+        <span class="copy-name">${esc(fileName(copy.path))}</span>
+        <button class="link copy-folder" data-insights="reveal" data-file="${esc(copy.path)}" title="${esc(t("Show in the folder"))}">${esc(folder)}</button>
+        ${copy.otherFacesRedundant ? "" : `<span class="copy-warning">${t("Also holds fonts found in no other file")}</span>`}
+      </span>
+      <span class="copy-meta mono">${copy.version ? `v${versionNumber(copy.version).toFixed(3)}` : "-"}</span>
+      <span class="copy-meta">${sizeOf(copy.fileSize)}</span>
+      <span class="copy-meta">${dateOf(copy.modified)}</span>
+      <span class="chip">${esc(locations[copy.location])}</span>
+    </div>`;
+  };
+  const shown = groups.slice(0, state.insightsLimit);
+  return `<div class="insights-bar">
+      <button data-insights="back">‹ ${t("Insights")}</button>
+      <span class="spacer"></span>
+      <button data-insights="select">${t("Select")} ▾</button>
+      <button class="danger" data-insights="trash" ${selected ? "" : "disabled"}>${t("Move to Trash")}${selected ? ` (${selected})` : ""}</button>
+    </div>
+    ${shown
+      .map(
+        (g) => `<section class="dup-group">
+          <h3>${esc(g.family)} <span class="muted">${esc(g.style)}</span>${g.conflict ? ` <span class="chip conflict">${t("Conflict")}</span>` : ""}
+            <span class="mono muted small">${esc(g.psName)}</span></h3>
+          ${g.copies.map(row).join("")}
+        </section>`,
+      )
+      .join("")}
+    ${groups.length ? "" : `<p class="muted">${t("Nothing left to review here.")}</p>`}
+    ${groups.length > shown.length ? `<button class="more-button" data-insights="more">${t("Show more")}</button>` : ""}`;
+}
+
+function selectMenu(): (MenuItem | "-")[] {
+  const apply = (rule: SelectRule) => () => {
+    state.insightsSelected = selectByRule(rule, insightsGroups(), state.insights!.groups, state.insightsSelected);
+    renderList();
+  };
+  return [
+    { label: t("Inactive copies"), action: apply("inactive") },
+    { label: t("Files named like copies"), action: apply("namedCopy") },
+    { label: t("Older versions"), action: apply("older") },
+    { label: t("Smaller files"), action: apply("smaller") },
+    "-",
+    {
+      label: t("Clear the selection"),
+      action: () => {
+        state.insightsSelected.clear();
+        renderList();
+      },
+    },
+  ];
+}
+
+async function trashSelected() {
+  const impact = selectionImpact(state.insights!.groups, state.insightsSelected);
+  if (!impact.files) return;
+  const message = [
+    tn(impact.files, "Move {n} file ({size}) to the Trash?", "Move {n} files ({size}) to the Trash?", { size: sizeOf(impact.bytes) }),
+    impact.lost ? tn(impact.lost, "Warning: {n} font will have no copy left.", "Warning: {n} fonts will have no copy left.") : "",
+    impact.exclusive
+      ? tn(impact.exclusive, "Warning: {n} file also holds fonts found nowhere else.", "Warning: {n} files also hold fonts found nowhere else.")
+      : "",
+  ];
+  const ok = await ask(message.filter(Boolean).join("\n\n"), {
+    title: t("Move to Trash"),
+    kind: "warning",
+    okLabel: t("Move to Trash"),
+    cancelLabel: t("Cancel"),
+  });
+  if (!ok) return;
+  const paths = [...state.insightsSelected];
+  state.insightsSelected.clear();
+  await run(api.trashCopies(paths), tn(paths.length, "{n} file moved to the Trash", "{n} files moved to the Trash"));
+  loadSystemFonts();
+}
+
+function insightsClick(target: HTMLElement) {
+  const el = target.closest<HTMLElement>("[data-insights]");
+  if (!el) return;
+  const action = el.dataset.insights;
+  if (action === "select") return menuBelow(el, selectMenu());
+  if (action === "trash") return void trashSelected();
+  if (action === "reveal") return void revealItemInDir(el.dataset.file!).catch((e) => toast(String(e), true));
+  if (action === "retry") {
+    state.insightsError = null;
+    loadInsights(true);
+  } else if (action === "more") state.insightsLimit += INSIGHTS_PAGE;
+  else if (action === "back" || action === "open") {
+    state.insightsView = action === "back" ? "overview" : (el.dataset.viewName as "conflicts" | "duplicates");
+    state.insightsSelected.clear();
+    state.insightsLimit = INSIGHTS_PAGE;
+    $("#family-list").scrollTop = 0;
+  }
+  renderList();
+}
+
 function statusControl(fam: Family, act = activation(fam)) {
   return act === "system"
     ? `<span class="lock" title="${esc(activationLabels().system)}">${icon("lock", 13)}</span>`
@@ -1241,6 +1439,11 @@ function currentFace(fam: Family): Face {
 function renderDetail() {
   const pane = $("#detail");
   $("#inspector-button").classList.toggle("on", settings.inspector);
+  if (isInsights()) {
+    pane.hidden = true;
+    pane.innerHTML = "";
+    return;
+  }
   if (state.selected?.startsWith("g:")) {
     const g = googleByName(state.selected.slice(2));
     pane.hidden = !g || !settings.inspector;
@@ -1730,6 +1933,11 @@ function wire() {
     const nav = target.closest<HTMLElement>("[data-nav]");
     if (nav) {
       state.sidebar = nav.dataset.nav!;
+      if (isInsights()) {
+        state.insightsView = "overview";
+        state.insightsSelected.clear();
+        loadInsights(true);
+      }
       if (state.sidebar === "google" && !state.google) loadGoogle();
       render();
       $("#family-list").scrollTop = 0;
@@ -1772,8 +1980,17 @@ function wire() {
   });
 
   const list = $("#family-list");
+  list.addEventListener("change", (e) => {
+    const box = e.target as HTMLInputElement;
+    if (!box.dataset.path) return;
+    box.checked ? state.insightsSelected.add(box.dataset.path) : state.insightsSelected.delete(box.dataset.path);
+    const scroll = list.scrollTop;
+    renderList();
+    list.scrollTop = scroll;
+  });
   list.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
+    if (isInsights()) return insightsClick(target);
     if (target.closest('[data-action="import"]')) return void importDialog();
     const filter = target.closest<HTMLElement>("[data-filter]");
     if (filter) return applyFilter(filter.dataset.filter!, filter.dataset.value ?? "");
@@ -1832,6 +2049,7 @@ function wire() {
     }
   });
   list.addEventListener("keydown", (e) => {
+    if (isInsights()) return;
     const columns = settings.view === "rows" ? 1 : getComputedStyle(list).gridTemplateColumns.split(" ").length;
     const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: columns, ArrowUp: -columns }[e.key];
     if (!step) return;
@@ -2162,7 +2380,7 @@ function wire() {
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     target.closest("[data-close]")?.closest("dialog")?.close("cancel");
-    if (!target.closest("#menu, #import-button, #sort-button, #new-tag, [data-action='more'], [data-action='tags']")) hideMenu();
+    if (!target.closest("#menu, #import-button, #sort-button, #new-tag, [data-action='more'], [data-action='tags'], [data-insights='select']")) hideMenu();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
