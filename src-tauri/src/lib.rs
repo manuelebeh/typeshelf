@@ -1,4 +1,5 @@
 mod activation;
+mod bridge;
 mod db;
 mod fonts;
 mod google;
@@ -18,7 +19,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::http::{header, Response, StatusCode};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
@@ -600,6 +601,25 @@ fn plugin_api_config(enabled: bool, google: bool) -> plugin_api::ApiStatus {
     plugin_api::configure(enabled, google)
 }
 
+/// The design applications whose Typeshelf plugin is running.
+#[tauri::command]
+fn bridge_apps() -> Vec<bridge::ConnectedApp> {
+    bridge::global().connected(Instant::now())
+}
+
+#[tauri::command]
+async fn bridge_apply(app: AppHandle, client: String, ps_name: String) -> CmdResult<u64> {
+    tauri::async_runtime::spawn_blocking(move || plugin_api::apply_font(&app.state::<AppState>(), &client, &ps_name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Asks an application for its selected text; the answer comes as a `bridge-result` event.
+#[tauri::command]
+fn bridge_request_selection(client: String) -> CmdResult<u64> {
+    bridge::global().enqueue(Instant::now(), &client, bridge::SELECTION, None)
+}
+
 fn plugin_env(app: &AppHandle) -> CmdResult<plugin_install::Env> {
     let resources = app.path().resource_dir().map_err(|e| e.to_string())?.join("plugins");
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -715,6 +735,9 @@ pub fn run() {
             plugins_list,
             plugin_install,
             plugin_uninstall,
+            bridge_apps,
+            bridge_apply,
+            bridge_request_selection,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Typeshelf");
